@@ -82,10 +82,13 @@ def resolve(
     if anage_file is None:
         anage_file = data_dir / "input" / "anage" / "anage_data.txt"
     
-    # Ensure output goes to data/output/
+    # Ensure output goes to data/output/ for relative paths, or create parent dirs for absolute paths
     output_dir = data_dir / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / output.name if output.parent == Path(".") else output
+    
+    # Ensure parent directory exists for output (handles both relative and absolute paths)
+    output.parent.mkdir(parents=True, exist_ok=True)
     
     # Derive output file paths from base output path
     output_csv: Optional[Path] = None if skip_csv else output.parent / f"{output.stem}.csv"

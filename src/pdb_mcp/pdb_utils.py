@@ -533,9 +533,77 @@ def fetch_pdb_metadata(pdb_id: str, timeout: int = 10, retries: int = 3, use_tsv
         return {"pdb_id": pdb_id, "found": False, "error": str(e)}
 
 
+def normalize_organism_name(name: str) -> str:
+    """
+    Normalize organism name by fixing common typos and variants.
+    
+    Args:
+        name: Organism name (scientific or common)
+    
+    Returns:
+        Normalized name
+    """
+    name_lower = name.lower().strip()
+    
+    # Common typos and synonyms in PDB data
+    typo_map = {
+        # Human
+        "home sapiens": "homo sapiens",
+        "homo sapien": "homo sapiens",
+        # Mouse
+        "balb/c mouse": "mus musculus",
+        "c57bl/6 mouse": "mus musculus",
+        "c57bl/6j mouse": "mus musculus",
+        "swiss mouse": "mus musculus",
+        # Rat
+        "buffalo rat": "rattus norvegicus",
+        "wistar rat": "rattus norvegicus",
+        "sprague-dawley rat": "rattus norvegicus",
+        # Cattle
+        "bos bovis": "bos taurus",
+        # Fruit fly
+        "drosophila melangaster": "drosophila melanogaster",
+        # Yeast
+        "baker's yeast": "saccharomyces cerevisiae",
+        "bakers yeast": "saccharomyces cerevisiae",
+        # Bacteria (E. coli is in AnAge as a model organism)
+        "bacillus coli": "escherichia coli",
+        # Other bacteria (not in AnAge, but correct for consistency)
+        "micrococcus aureus": "staphylococcus aureus",
+        "bacillus mesentericus": "bacillus subtilis",
+        "bacillus tuberculosis": "mycobacterium tuberculosis",
+        "bacillus pestis": "yersinia pestis",
+        "bacillus aeruginosus": "pseudomonas aeruginosa",
+        "ampylobacter jejuni": "campylobacter jejuni",
+    }
+    
+    if name_lower in typo_map:
+        return typo_map[name_lower]
+    
+    # Handle strain/subspecies variants - extract genus + species (first two words)
+    # Examples: "Escherichia coli K-12" → "Escherichia coli"
+    #          "Anabaena sp. DCC D0672" → "Anabaena sp."
+    parts = name_lower.split()
+    if len(parts) > 2:
+        # Check if third word looks like a strain/subspecies marker
+        third_word = parts[2]
+        # Common strain markers
+        if any(marker in third_word for marker in ['atcc', 'dsm', 'strain', 'var.', 'subsp.', 'k-', 'h37rv', 'kt2440', 'pa01', 'dcc', 'v583']):
+            return f"{parts[0]} {parts[1]}"
+        # If third word is all uppercase or starts with uppercase (likely strain ID)
+        if third_word.isupper() or (len(third_word) > 0 and third_word[0].isupper()):
+            return f"{parts[0]} {parts[1]}"
+        # If third word is numeric (e.g., "168", "27634")
+        if third_word.isdigit():
+            return f"{parts[0]} {parts[1]}"
+    
+    return name_lower
+
+
 def classify_organism(scientific_name: str, anage_data: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Classify organism based on AnAge database lookup.
+    Handles typos, common names, and strain variants through normalization.
     
     Args:
         scientific_name: Scientific name of organism
@@ -548,11 +616,12 @@ def classify_organism(scientific_name: str, anage_data: Optional[Dict[str, Dict[
     if anage_data is None:
         anage_data = ANAGE_DATA
     
-    scientific_name_lower = scientific_name.lower().strip()
+    # Normalize the name to fix typos and variants
+    normalized_name = normalize_organism_name(scientific_name)
     
-    # Check if organism is in AnAge database
-    if scientific_name_lower in anage_data:
-        anage_entry = anage_data[scientific_name_lower]
+    # Check if organism is in AnAge database (exact match after normalization)
+    if normalized_name in anage_data:
+        anage_entry = anage_data[normalized_name]
         return {
             "classification": anage_entry.get("class", "Unknown"),
             "common_name": anage_entry.get("common_name", ""),
@@ -561,6 +630,21 @@ def classify_organism(scientific_name: str, anage_data: Optional[Dict[str, Dict[
             "phylum": anage_entry.get("phylum", ""),
             "in_anage": True
         }
+    
+    # Try genus + species only (first two words) if not already tried
+    parts = normalized_name.split()
+    if len(parts) >= 2:
+        genus_species = f"{parts[0]} {parts[1]}"
+        if genus_species != normalized_name and genus_species in anage_data:
+            anage_entry = anage_data[genus_species]
+            return {
+                "classification": anage_entry.get("class", "Unknown"),
+                "common_name": anage_entry.get("common_name", ""),
+                "max_longevity_yrs": anage_entry.get("max_longevity_yrs"),
+                "kingdom": anage_entry.get("kingdom", ""),
+                "phylum": anage_entry.get("phylum", ""),
+                "in_anage": True
+            }
     
     # Not found in AnAge database
     return {
