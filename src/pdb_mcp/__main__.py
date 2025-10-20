@@ -11,9 +11,12 @@ Provides MCP tools for:
 
 import typer
 from pdb_mcp.server import mcp, DEFAULT_HOST, DEFAULT_PORT
-
+from pdb_mcp.resolve_protein_names import app as resolve_app
 
 app = typer.Typer(help="PDB-MCP Server - Protein structure queries and resolution")
+
+# Add resolve command as a subcommand
+app.add_typer(resolve_app, name="resolve", help="Resolve protein names and gene symbols from UniProt IDs")
 
 
 @app.command("run")

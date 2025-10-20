@@ -155,7 +155,9 @@ pdb-mcp/
 │       └── results.csv & results.jsonl.gz  # Output results
 ├── src/pdb_mcp/
 │   ├── resolve_proteins.py                 # Resolve protein names
-│   ├── download_pdb_annotations.py         # Download annotations
+│   ├── sifts/
+│   │   ├── download.py                     # Download SIFTS annotations
+│   │   └── utils.py                        # SIFTS utilities
 │   └── __main__.py                         # CLI entry point
 ├── GETTING_STARTED.md                      # This file
 ├── DOWNLOAD_ANNOTATIONS.md                 # Download details
@@ -301,10 +303,91 @@ If you run out of memory processing large files:
 2. Reduce `--csv-batch-size` (default: 500)
 3. Process in smaller batches using `--line-numbers`
 
+## Library Usage
+
+PDB-MCP can also be used as a Python library for programmatic access:
+
+### Basic Example: Get Protein Information
+
+```python
+from pdb_mcp import (
+    load_anage_data,
+    fetch_pdb_metadata,
+    get_chain_organism,
+    get_chain_protein_name,
+    get_chain_uniprot_ids,
+)
+from pathlib import Path
+
+# Load AnAge database (organism classifications)
+anage_data = load_anage_data(Path("data/input/anage/anage_data.txt"))
+
+# Fetch PDB metadata (using RCSB API, no local files needed)
+metadata = fetch_pdb_metadata("2uxq", use_tsv=False)
+
+# Process each chain in the structure
+if metadata["found"]:
+    print(f"PDB ID: {metadata['pdb_id']}")
+
+    for entity in metadata["entities"]:
+        for chain_id in entity["chains"]:
+            protein_name = get_chain_protein_name(metadata, chain_id)
+            organism = get_chain_organism(metadata, chain_id, anage_data)
+            uniprot_ids = get_chain_uniprot_ids(metadata, chain_id)
+
+            print(f"\nChain {chain_id}:")
+            print(f"  Protein: {protein_name}")
+            print(f"  Organism: {organism['scientific_name']}")
+            print(f"  Classification: {organism['classification']}")
+            print(f"  UniProt IDs: {uniprot_ids}")
+```
+
+### Batch Processing with Local Files
+
+```python
+from pdb_mcp import (
+    load_anage_data,
+    load_pdb_annotations,
+    fetch_pdb_metadata,
+    get_chain_organism,
+    iter_jsonl_gz_lines,
+    StreamingCSVWriter,
+)
+from pathlib import Path
+
+# Pre-load PDB annotations (faster lookups)
+load_pdb_annotations(Path("data/input/pdb"))
+anage_data = load_anage_data(Path("data/input/anage/anage_data.txt"))
+
+# Stream process large file
+with StreamingCSVWriter(Path("results.csv")) as csv_writer:
+    for entry_data in iter_jsonl_gz_lines(Path("data.jsonl.gz")):
+        entry_id = entry_data["entry"]["id"]
+        pdb_id = entry_id.split("_")[0]
+
+        metadata = fetch_pdb_metadata(pdb_id, use_tsv=True)
+
+        if metadata["found"]:
+            for entity in metadata["entities"]:
+                for chain_id in entity["chains"]:
+                    organism = get_chain_organism(metadata, chain_id, anage_data)
+
+                    result = {
+                        "entry_id": entry_id,
+                        "pdb_id": pdb_id,
+                        "chain_id": chain_id,
+                        "organism": organism["scientific_name"],
+                        "classification": organism["classification"],
+                    }
+                    csv_writer.add_result(result)
+```
+
 ## Next Steps
 
-- Read [DOWNLOAD_ANNOTATIONS.md](DOWNLOAD_ANNOTATIONS.md) for detailed download documentation
-- Read [RESOLVE_PROTEINS_USAGE.md](RESOLVE_PROTEINS_USAGE.md) for detailed resolve documentation
+- Read [DOWNLOAD_ANNOTATIONS.md](preprocessing/DOWNLOAD_ANNOTATIONS.md) for detailed download documentation
+- Read [RESOLVE_PROTEINS_USAGE.md](preprocessing/RESOLVE_PROTEINS_USAGE.md) for detailed resolve documentation
+- Read [GENE_RESOLUTION.md](preprocessing/GENE_RESOLUTION.md) for gene resolution documentation
+- Read [LIBRARY_STRUCTURE.md](LIBRARY_STRUCTURE.md) for comprehensive API documentation
 - Check the logs directory for processing details
 - Explore the output CSV and JSONL files
 

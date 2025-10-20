@@ -43,7 +43,7 @@ class LinkExtractor(HTMLParser):
 def get_output_dir() -> Path:
     """Get the output directory for PDB annotations."""
     current_file = Path(__file__).resolve()
-    project_root = current_file.parent.parent.parent  # src/pdb_mcp/download_pdb_annotations.py -> project root
+    project_root = current_file.parent.parent.parent.parent  # src/pdb_mcp/sifts/download.py -> project root
     output_dir = project_root / "data" / "input" / "pdb"
     
     if not output_dir.exists():
@@ -228,3 +228,4 @@ if __name__ == "__main__":
         app(["--help"])
     else:
         app()
+

@@ -4,7 +4,7 @@ This guide explains how to download PDB annotation files from the EBI SIFTS data
 
 ## Overview
 
-The PDB annotation files are stored at the [EBI SIFTS FTP server](https://ftp.ebi.ac.uk/pub/databases/msd/sifts/flatfiles/tsv/). The `download_pdb_annotations` module provides a convenient way to download all necessary files using `fsspec`.
+The PDB annotation files are stored at the [EBI SIFTS FTP server](https://ftp.ebi.ac.uk/pub/databases/msd/sifts/flatfiles/tsv/). The `pdb_mcp.sifts.download` module provides a convenient way to download all necessary files.
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ uv run python -m pdb_mcp download download --no-skip-existing
 
 ```python
 from pathlib import Path
-from pdb_mcp.download_pdb_annotations import download
+from pdb_mcp.sifts.download import download
 
 download(
     output_dir=Path("data/input/pdb"),
