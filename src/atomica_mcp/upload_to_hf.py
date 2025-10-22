@@ -13,6 +13,7 @@ import typer
 from eliot import start_action, Message, to_file
 import tempfile
 import shutil
+from dotenv import load_dotenv
 
 app = typer.Typer()
 
@@ -173,6 +174,9 @@ def upload(
     Upload atomica_longevity_proteins dataset to HuggingFace Hub.
     Only uploads new or changed files using bulk upload.
     """
+    # Load environment variables from .env file
+    load_dotenv()
+    
     if log_file:
         to_file(open(log_file, "w"))
     

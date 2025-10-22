@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "uvx",
+      "args": ["atomica-mcp"],
+      "env": {}
+    }
+  }
+}
+

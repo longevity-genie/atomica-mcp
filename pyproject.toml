@@ -24,12 +24,11 @@ dependencies = [
 ]
 
 [project.scripts]
-atomica-mcp = "atomica_mcp.__main__:app"
-atomica-mcp-stdio = "atomica_mcp.__main__:cli_app_stdio_standalone"
-atomica-mcp-sse = "atomica_mcp.__main__:cli_app_sse_standalone"
-atomica-mcp-run = "atomica_mcp.__main__:cli_app_run"
-resolve = "atomica_mcp.preprocessing.resolve_proteins:app"
-get-pdb = "atomica_mcp.preprocessing.sifts.download:app"
+atomica-mcp = "atomica_mcp.__main__:cli_app_stdio_standalone"
+atomica-stdio = "atomica_mcp.__main__:cli_app_stdio_standalone"
+atomica-sse = "atomica_mcp.__main__:cli_app_sse_standalone"
+atomica-run = "atomica_mcp.__main__:cli_app_run"
+atomica-cli = "atomica_mcp.__main__:app"
 dataset = "atomica_mcp.dataset:app"
 pdb-mining = "atomica_mcp.mining.cli:main"
 upload-to-hf = "atomica_mcp.upload_to_hf:app"
@@ -44,10 +43,25 @@ dev = [
     "jupyterlab>=4.4.10",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "pytest-timeout>=2.3.1",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/atomica_mcp"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "data/",
+    "logs/",
+    "notebooks/",
+    "docs/",
+    "tests/",
+    "examples/",
+    ".pytest_cache/",
+    "*.log",
+    "*.json",
+    "mcp-config-*.json",
+]
 
 [tool.uv]
 package = true

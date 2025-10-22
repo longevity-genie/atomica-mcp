@@ -1,124 +1,174 @@
-# pdb-mcp
+# atomica-mcp
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-MCP (Model Context Protocol) server for PDB structure queries and protein resolution using the AnAge database.
+MCP (Model Context Protocol) server for ATOMICA longevity proteins dataset and PDB structure analysis.
 
-This server implements the Model Context Protocol (MCP) for PDB (Protein Data Bank), providing a standardized interface for querying protein structures and resolving proteins using longevity data from the AnAge database. MCP enables AI assistants and agents to access PDB structures and organism aging information through structured interfaces.
+This server provides access to the ATOMICA longevity proteins dataset from Hugging Face, which contains comprehensive structural analysis of key aging-related proteins using the ATOMICA deep learning model. The server also provides auxiliary functions for resolving arbitrary PDB structures and UniProt IDs.
 
 ## Features
 
-- **PDB Structure Queries**: Fetch metadata for any PDB structure by ID (resolution, title, chains, organisms)
-- **Organism Classification**: Classify organisms using the AnAge database to get longevity and taxonomy information
-- **Chain Information**: Get detailed protein names, organism info, and UniProt IDs for specific PDB chains
-- **AnAge Integration**: Access comprehensive animal aging and longevity data for thousands of species
-- **Efficient Data Loading**: Optional local TSV files for fast queries (PDB chain-to-organism and chain-to-UniProt mappings)
-- **RCSB API Fallback**: Automatically uses RCSB REST API if local data unavailable
+- **ATOMICA Dataset Access**: Query the curated dataset of 94 longevity-related protein structures
+- **Automatic Dataset Management**: Downloads dataset from Hugging Face on first use
+- **Comprehensive Metadata**: Access PDB metadata, ATOMICA interaction scores, critical residues, and PyMOL scripts
+- **Gene-Based Queries**: Search structures by gene symbols (NFE2L2, KEAP1, SOX2, APOE, OCT4)
+- **Organism Queries**: Filter structures by organism
+- **PDB Resolution**: Resolve metadata for any PDB ID (not just ATOMICA dataset)
+- **UniProt Integration**: Get all PDB structures for any UniProt ID
+- **Efficient Indexing**: Polars-based indexing for fast queries
+
+## ATOMICA Dataset
+
+The dataset contains structural analysis of key longevity-related proteins:
+
+### Protein Families
+- **NRF2 (NFE2L2)**: 19 structures - Oxidative stress response
+- **KEAP1**: 47 structures - Oxidative stress response  
+- **SOX2**: 8 structures - Pluripotency factor
+- **APOE (E2/E3/E4)**: 9 structures - Lipid metabolism & Alzheimer's
+- **OCT4 (POU5F1)**: 4 structures - Reprogramming factor
+
+### Files per Structure
+- `{pdb_id}.cif` - Structure file (mmCIF format)
+- `{pdb_id}_metadata.json` - PDB metadata
+- `{pdb_id}_interact_scores.json` - ATOMICA interaction scores
+- `{pdb_id}_summary.json` - Processing statistics
+- `{pdb_id}_critical_residues.tsv` - Ranked critical residues
+- `{pdb_id}_pymol_commands.pml` - PyMOL visualization commands
+
+**Repository**: [longevity-genie/atomica_longevity_proteins](https://huggingface.co/datasets/longevity-genie/atomica_longevity_proteins)
 
 ## Available Tools
 
-### 1. `pdb_fetch_structure(pdb_id: str)`
-Fetch metadata for a PDB structure by ID.
+### Dataset Query Tools
+
+#### 1. `atomica_list_structures(limit: int = 100, offset: int = 0)`
+List all PDB structures in the ATOMICA dataset.
 
 **Returns:**
-- Structure title and resolution
-- List of polymer entities with chains
-- Organism information for each chain
-- UniProt protein IDs for each chain
+- List of structures with basic information
+- Total count and pagination info
 
 **Example:**
-```
-pdb_fetch_structure("2uxq")
+```python
+atomica_list_structures(limit=10)
 ```
 
-### 2. `pdb_classify_organism(scientific_name: str)`
-Classify an organism using the AnAge database.
+#### 2. `atomica_get_structure(pdb_id: str)`
+Get detailed information about a specific PDB structure from the ATOMICA dataset.
 
 **Returns:**
-- Organism classification (mammals, birds, reptiles, etc.)
-- Common name
-- Maximum longevity in years
-- Kingdom and phylum information
-- Whether organism is in AnAge database
+- File paths (CIF, metadata, critical residues, etc.)
+- Extended metadata if available (title, UniProt IDs, gene symbols, organisms)
 
 **Example:**
-```
-pdb_classify_organism("Homo sapiens")
-pdb_classify_organism("Mus musculus")
+```python
+atomica_get_structure("1b68")
 ```
 
-### 3. `pdb_get_chain_info(pdb_id: str, chain_id: str)`
-Get detailed information about a specific chain in a PDB structure.
+#### 3. `atomica_get_structure_files(pdb_id: str)`
+Get file paths and availability for a PDB structure.
 
 **Returns:**
-- Protein name/description
-- Organism information with AnAge data
+- Dictionary of file paths
+- Availability status for each file type
+
+**Example:**
+```python
+atomica_get_structure_files("1b68")
+```
+
+#### 4. `atomica_search_by_gene(gene_symbol: str)`
+Search ATOMICA dataset for structures by gene symbol.
+
+**Supported genes**: NFE2L2, KEAP1, SOX2, APOE, POU5F1
+
+**Example:**
+```python
+atomica_search_by_gene("KEAP1")
+```
+
+#### 5. `atomica_search_by_organism(organism: str)`
+Search ATOMICA dataset for structures by organism.
+
+**Example:**
+```python
+atomica_search_by_organism("Homo sapiens")
+atomica_search_by_organism("human")
+```
+
+### Auxiliary PDB Tools
+
+#### 6. `atomica_resolve_pdb(pdb_id: str)`
+Resolve metadata for any PDB ID (not restricted to ATOMICA dataset).
+
+**Returns:**
 - UniProt IDs
+- Gene symbols
+- Organism information
+- Taxonomy IDs
+- Structure details
 
 **Example:**
-```
-pdb_get_chain_info("2uxq", "A")
-pdb_get_chain_info("1a3x", "B")
+```python
+atomica_resolve_pdb("1tup")  # TP53 structure
 ```
 
-### 4. `pdb_list_organisms_in_anage()`
-Get all organisms available in the AnAge database.
+#### 7. `atomica_get_structures_for_uniprot(uniprot_id: str, max_structures: int = 100)`
+Get all available PDB structures for a given UniProt ID.
 
 **Returns:**
-- List of all scientific names in AnAge database
+- List of structures with metadata
+- Resolution, experimental method, dates
+- Complex information (protein-protein, ligands, nucleotides)
 
-**Use for:**
-- Understanding which organisms have longevity data
-- Planning comparative studies
+**Example:**
+```python
+atomica_get_structures_for_uniprot("P04637")  # TP53 UniProt ID
+```
 
-### 5. `pdb_get_available_data()`
-Get information about available data sources.
+#### 8. `atomica_dataset_info()`
+Get information about the ATOMICA dataset status and statistics.
 
 **Returns:**
-- AnAge database status and organism count
-- PDB annotations availability
-- Server information
+- Dataset availability
+- Structure counts
+- Unique genes and organisms
+- Repository information
 
 ## Available Resources
 
-### 1. `resource://pdb_anage-info`
-Comprehensive information about the AnAge database including available fields, use cases, and organisms included.
+### 1. `resource://atomica_dataset-info`
+Detailed information about the ATOMICA longevity proteins dataset.
 
-### 2. `resource://pdb_pdb-annotations-info`
-Information about available PDB annotation data sources and their status.
-
-### 3. `resource://pdb_schema-summary`
-Summary of available tools, data sources, and schema information.
+### 2. `resource://atomica_index-schema`
+Schema of the dataset index with query patterns.
 
 ## Installation
 
 ### Quick Start with uvx
 
-The easiest way to run the server:
-
 ```bash
 # Install uv first if needed
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Run the server directly
-uvx pdb-mcp stdio
-```
+# Run the server (stdio by default - no subcommand needed)
+uvx atomica-mcp
 
-### Installing from PyPI
-
-```bash
-pip install pdb-mcp
-# or with uv
-uv pip install pdb-mcp
+# Or be explicit about transport
+uv tool run atomica-mcp  # stdio by default
+uvx atomica-stdio         # same as above
+uvx atomica-run           # HTTP server
+uvx atomica-sse           # SSE server
 ```
 
 ### Installing from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/longevity-genie/pdb-mcp.git
-cd pdb-mcp
+git clone https://github.com/longevity-genie/atomica-mcp.git
+cd atomica-mcp
 
 # Install with uv
 uv sync
@@ -132,181 +182,414 @@ pip install -e .
 ### Using stdio transport (recommended for AI assistants)
 
 ```bash
-pdb-mcp stdio
+# Default - runs stdio automatically
+atomica-mcp
+
+# Or be explicit
+atomica-stdio
 ```
 
 ### Using HTTP transport
 
 ```bash
-pdb-mcp run --host localhost --port 3002
+atomica-run --host localhost --port 3002
 ```
 
 ### Using SSE transport
 
 ```bash
-pdb-mcp sse --host localhost --port 3002
+atomica-sse --host localhost --port 3002
+```
+
+### Using the CLI interface (for subcommands)
+
+If you need the full CLI with subcommands:
+
+```bash
+atomica-cli stdio
+atomica-cli run --host localhost --port 3002
+atomica-cli sse --host localhost --port 3002
 ```
 
 ## Configuration
 
-Environment variables:
+### Environment Variables
+
 - `MCP_HOST`: Server host (default: 0.0.0.0)
 - `MCP_PORT`: Server port (default: 3002)
 - `MCP_TRANSPORT`: Transport type (default: streamable-http)
+- `MCP_TIMEOUT`: Timeout for external API requests in seconds (default: 300)
 
-## Data Sources
+The timeout setting is important when making requests to external APIs like PDBe and UniProt:
 
-### AnAge Database
-The AnAge (Animal Ageing and Longevity) database contains:
-- **Maximum longevity data** for thousands of species
-- **Taxonomic classifications** (Kingdom, Phylum, Class, etc.)
-- **Common names** for organisms
-- **Life history traits**
+```bash
+# Increase timeout to 10 minutes
+export MCP_TIMEOUT=600
+atomica-stdio
+```
 
-Data location: `data/input/anage/anage_data.txt`
+### MCP Client Configuration
 
-### PDB Annotations (Optional)
-For faster queries, the server can use local PDB annotation TSV files:
-- **pdb_chain_uniprot.tsv.gz**: Maps PDB chains to UniProt proteins
-- **pdb_chain_taxonomy.tsv.gz**: Maps PDB chains to organisms
+#### For Claude Desktop
 
-Data location: `data/input/pdb/`
+Add to your Claude Desktop configuration file:
 
-If these files are not present, the server will use the RCSB REST API (slower but always available).
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+**Using uvx (recommended - no installation needed):**
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "uvx",
+      "args": ["atomica-mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+**With custom timeout:**
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "uvx",
+      "args": ["atomica-mcp"],
+      "env": {
+        "MCP_TIMEOUT": "600"
+      }
+    }
+  }
+}
+```
+
+**Using locally installed package:**
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "atomica-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+
+**Or use the dedicated stdio entry point:**
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "atomica-stdio",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+
+**With full path (if not in PATH):**
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "/path/to/.venv/bin/atomica-stdio",
+      "args": [],
+      "env": {
+        "MCP_TIMEOUT": "300"
+      }
+    }
+  }
+}
+```
+
+#### For HTTP-based MCP Clients
+
+First, start the HTTP server:
+```bash
+atomica-run --host localhost --port 3002
+```
+
+Then configure your client:
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "url": "http://localhost:3002/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}
+```
+
+#### For SSE-based MCP Clients
+
+First, start the SSE server:
+```bash
+atomica-sse --host localhost --port 3002
+```
+
+Then configure your client:
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "url": "http://localhost:3002/sse",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+#### Multiple Servers Configuration
+
+You can combine ATOMICA with other MCP servers:
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "uvx",
+      "args": ["atomica-mcp"]
+    },
+    "opengenes": {
+      "command": "uvx",
+      "args": ["opengenes-mcp"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/files"]
+    }
+  }
+}
+```
+
+### Testing Your Configuration
+
+After configuring, restart Claude Desktop and check:
+
+1. **Server appears in tools**: Claude should show ATOMICA tools available
+2. **Test a simple query**: "List structures in the ATOMICA dataset"
+3. **Check tool execution**: Claude should call `atomica_list_structures()`
+
+If the server doesn't appear:
+- Check the configuration file path is correct
+- Verify the command works in terminal: `uvx atomica-mcp --help`
+- Look for errors in Claude Desktop logs
+
+## Dataset Management CLI
+
+The package includes a CLI for managing the ATOMICA dataset:
+
+### Download Dataset
+
+```bash
+# Download full dataset
+dataset download
+
+# Download to custom directory
+dataset download --output-dir data/inputs
+
+# Download only CIF structure files
+dataset download --pattern "*.cif"
+
+# Download only files for specific PDB (e.g., 6ht5)
+dataset download --pattern "6ht5*"
+
+# Force re-download even if files exist
+dataset download --force
+```
+
+### List Available Files
+
+```bash
+# List all files in the dataset
+dataset list-files
+
+# Filter by pattern
+dataset list-files --pattern "*.cif"
+```
+
+### Create/Update Index
+
+```bash
+# Create index with basic file paths
+dataset index
+
+# Create index with full metadata resolution
+dataset index --include-metadata
+
+# Custom paths
+dataset index --dataset-dir data/atomica --output data/index.parquet
+```
+
+### Reorganize Dataset
+
+```bash
+# Reorganize files into per-PDB folders
+dataset reorganize
+
+# Dry run to see what would be done
+dataset reorganize --dry-run
+```
+
+### Dataset Information
+
+```bash
+# Show dataset information
+dataset info
+```
 
 ## Usage Examples
 
-### Basic PDB Structure Query
+### Query ATOMICA Dataset
 
 ```
-User: "Tell me about the 2uxq protein structure"
+User: "What structures are available for KEAP1?"
 
 Tool Call:
-pdb_fetch_structure("2uxq")
+atomica_search_by_gene("KEAP1")
 
 Response:
 {
-  "pdb_id": "2uxq",
-  "found": true,
-  "title": "COMPLEX OF PEROXISOME PROLIFERATOR-ACTIVATED RECEPTOR GAMMA WITH ROSIGLITAZONE",
-  "resolution": [2.1],
-  "entities": [
+  "gene_symbol": "KEAP1",
+  "structures": [
     {
-      "chains": ["A"],
-      "organism": {
-        "scientific_name": "Homo sapiens",
-        "taxonomy_id": 9606
-      },
-      "uniprot_ids": ["P37231"]
-    }
-  ]
+      "pdb_id": "1U6D",
+      "title": "Kelch domain of Keap1",
+      "uniprot_ids": ["Q14145"],
+      "gene_symbols": ["KEAP1"]
+    },
+    ...
+  ],
+  "count": 47
 }
 ```
 
-### Organism Classification
+### Get Structure Details
 
 ```
-User: "Is Homo sapiens in the AnAge database and what is its maximum longevity?"
+User: "Tell me about structure 1b68"
 
 Tool Call:
-pdb_classify_organism("Homo sapiens")
+atomica_get_structure("1b68")
 
 Response:
 {
-  "scientific_name": "Homo sapiens",
-  "classification": "Mammalia",
-  "common_name": "Human",
-  "max_longevity_yrs": 122.45,
-  "in_anage": true,
-  "kingdom": "Animalia",
-  "phylum": "Chordata"
+  "pdb_id": "1B68",
+  "cif_path": "data/input/atomica_longevity_proteins/1b68.cif",
+  "metadata_path": "data/input/atomica_longevity_proteins/1b68_metadata.json",
+  "critical_residues_path": "data/input/atomica_longevity_proteins/1b68_critical_residues.tsv",
+  "interact_scores_path": "data/input/atomica_longevity_proteins/1b68_interact_scores.json",
+  "pymol_path": "data/input/atomica_longevity_proteins/1b68_pymol_commands.pml",
+  "title": "NMR Structure of Mouse APOE3",
+  "uniprot_ids": ["P08226"],
+  "gene_symbols": ["APOE"],
+  "critical_residues_count": 156
 }
 ```
 
-### Chain Information
+### Resolve Arbitrary PDB
 
 ```
-User: "What protein is in chain A of structure 2uxq?"
+User: "What proteins are in PDB 1tup?"
 
 Tool Call:
-pdb_get_chain_info("2uxq", "A")
+atomica_resolve_pdb("1tup")
 
 Response:
 {
-  "pdb_id": "2uxq",
-  "chain_id": "A",
+  "pdb_id": "1TUP",
   "found": true,
-  "protein_name": "Peroxisome proliferator-activated receptor gamma",
-  "organism": {
-    "scientific_name": "Homo sapiens",
-    "classification": "Mammalia",
-    "common_name": "Human",
-    "max_longevity_yrs": 122.45,
-    "in_anage": true
-  },
-  "uniprot_ids": ["P37231"]
+  "title": "Tumor protein p53 DNA-binding domain",
+  "uniprot_ids": ["P04637"],
+  "gene_symbols": ["TP53"],
+  "organisms": ["Homo sapiens"],
+  "taxonomy_ids": [9606],
+  "structures": [...]
+}
+```
+
+### Get Structures for UniProt ID
+
+```
+User: "What PDB structures are available for TP53 (P04637)?"
+
+Tool Call:
+atomica_get_structures_for_uniprot("P04637", max_structures=5)
+
+Response:
+{
+  "uniprot_id": "P04637",
+  "structures": [
+    {
+      "structure_id": "1TUP",
+      "uniprot_id": "P04637",
+      "gene_symbol": "TP53",
+      "resolution": 2.2,
+      "experimental_method": "X-ray diffraction",
+      "deposition_date": "1994-06-09"
+    },
+    ...
+  ],
+  "count": 5
 }
 ```
 
 ## Library Usage
 
-You can also use pdb-mcp as a Python library for your own scripts:
+You can also use atomica-mcp as a Python library:
 
 ```python
-from pdb_mcp.pdb_utils import (
-    load_anage_data,
-    fetch_pdb_metadata,
-    classify_organism,
-    get_chain_info
-)
-from pathlib import Path
+from atomica_mcp.server import AtomicaMCP
+from atomica_mcp.dataset import resolve_pdb_metadata
+from atomica_mcp.mining.pdb_metadata import get_structures_for_uniprot
 
-# Load AnAge data
-anage_data = load_anage_data(Path("data/input/anage/anage_data.txt"))
+# Initialize server
+mcp = AtomicaMCP()
 
-# Fetch PDB structure
-metadata = fetch_pdb_metadata("2uxq")
-print(metadata["title"])
+# Query ATOMICA dataset
+structures = mcp.list_structures(limit=10)
+keap1_structures = mcp.search_by_gene("KEAP1")
 
-# Classify organism
-organism = classify_organism("Homo sapiens", anage_data)
-print(f"Max longevity: {organism['max_longevity_yrs']} years")
+# Resolve arbitrary PDB
+tp53_metadata = resolve_pdb_metadata("1tup")
 
-# Get chain information
-chain_info = get_chain_info(metadata, "A")
-print(f"Protein: {chain_info['protein_name']}")
+# Get structures for UniProt
+p53_structures = get_structures_for_uniprot("P04637")
 ```
 
 ## Architecture
 
-### PDBMCPServer Class
+### Server Components
 
-The main MCP server class that inherits from `FastMCP`:
-- Loads AnAge data on initialization
-- Registers tools and resources
-- Provides methods for PDB queries and organism classification
+- **AtomicaMCP**: Main MCP server class inheriting from FastMCP
+- **Dataset Management**: Automatic download and indexing of ATOMICA dataset
+- **PDB Mining**: Comprehensive metadata resolution using PDBe and UniProt APIs
+- **Efficient Queries**: Polars-based indexing for fast searches
 
-### pdb_utils Module
+### Key Modules
 
-Core utility functions:
-- `fetch_pdb_metadata()`: Fetch structure metadata from RCSB API or local TSV
-- `classify_organism()`: Look up organism in AnAge database
-- `get_chain_protein_name()`: Extract protein name for a chain
-- `get_chain_organism()`: Get organism info and AnAge classification for a chain
-- `get_chain_uniprot_ids()`: Get UniProt IDs for a chain
-- `load_anage_data()`: Load AnAge database from TSV file
-- `load_pdb_annotations()`: Load PDB annotations from TSV.GZ files
+- `server.py`: MCP server implementation
+- `dataset.py`: Dataset download and management CLI
+- `mining/pdb_metadata.py`: PDB metadata mining with retry logic
+- `upload_to_hf.py`: Dataset upload utilities
 
 ## Requirements
 
-- Python 3.10+
-- biotite >= 1.2.0 (PDB structure access)
-- fastmcp >= 2.12.5 (MCP framework)
-- eliot >= 1.17.5 (Logging)
-- polars >= 1.34.0 (Data processing)
-- requests >= 2.31.0 (HTTP requests)
-- tenacity >= 9.1.2 (Retry logic)
-- typer >= 0.16.0 (CLI)
+- Python 3.11+
+- biotite >= 1.5.0
+- eliot >= 1.17.5
+- fastmcp >= 2.12.5
+- fsspec >= 2025.9.0
+- huggingface-hub >= 0.35.3
+- polars >= 1.34.0
+- pycomfort >= 0.0.18
+- requests >= 2.32.5
+- tenacity >= 9.1.2
+- typer >= 0.20.0
 
 ## Testing
 
@@ -317,19 +600,129 @@ uv run pytest
 
 Run specific test:
 ```bash
-uv run pytest tests/test_pdb_resolution.py -v
+uv run pytest tests/test_mcp_server.py -v
+uv run pytest tests/test_pdb_mining.py -v
+```
+
+### Test Timeouts
+
+Tests are configured with timeouts to prevent hanging:
+- **Default timeout**: 300 seconds (5 minutes) for all tests
+- **Individual tests**: Some tests have specific timeouts (e.g., 60s for PDB resolution, 120s for UniProt queries)
+
+The timeout is configured via `pytest-timeout` and set in `pytest.ini`. You can override it:
+
+```bash
+# Run with custom timeout
+uv run pytest --timeout=600
+
+# Disable timeout for debugging
+uv run pytest --timeout=0
+```
+
+If tests timeout, it usually means:
+1. Network issues connecting to external APIs (PDBe, UniProt)
+2. Dataset download is taking too long
+3. Server initialization is hanging
+
+You can increase the timeout in `pytest.ini` or via environment variable:
+
+```bash
+export PYTEST_TIMEOUT=600
+uv run pytest
 ```
 
 ## About MCP (Model Context Protocol)
 
-MCP is a protocol that bridges AI systems and specialized domain knowledge:
+The Model Context Protocol (MCP) is an open protocol that standardizes how applications provide context to Large Language Models (LLMs). Think of MCP servers as "tools" or "plugins" that AI assistants can use to access specialized data and functionality.
 
-- **Structured Access**: Direct connection to authoritative protein structure data and aging research
-- **Natural Language Queries**: Query PDB through AI assistants without SQL or complex APIs
-- **Type Safety**: Strong typing through Pydantic models
-- **AI Integration**: Seamless integration with AI assistants and coding tools
+### Why MCP?
 
-Learn more at [deeplearning.ai MCP course](https://www.deeplearning.ai/short-courses/mcp-build-rich-context-ai-apps-with-anthropic/).
+Traditional AI assistants are limited to their training data and can't access:
+- ⛔ Real-time data from specialized databases
+- ⛔ Domain-specific tools and APIs
+- ⛔ Your organization's internal resources
+
+**MCP solves this** by providing a standardized way for AI assistants to:
+- ✅ Query specialized databases (like ATOMICA longevity proteins)
+- ✅ Access domain-specific tools (PDB structure resolution, UniProt queries)
+- ✅ Retrieve structured, accurate data on demand
+
+### How It Works
+
+```
+AI Assistant (Claude, etc.)  ←→  MCP Server (atomica-mcp)  ←→  Data Sources
+                                                                  ├─ ATOMICA Dataset
+                                                                  ├─ PDB API
+                                                                  └─ UniProt API
+```
+
+1. **User asks question**: "What structures are available for KEAP1?"
+2. **AI decides to use tool**: Calls `atomica_search_by_gene("KEAP1")`
+3. **MCP server executes**: Queries local dataset or external APIs
+4. **Results returned**: Structured data sent back to AI
+5. **AI synthesizes answer**: Natural language response with accurate data
+
+### Key Benefits
+
+- **Structured Access**: Direct connection to curated longevity protein structures
+- **Natural Language Queries**: Ask questions naturally, AI handles the technical details
+- **Type Safety**: Strong typing ensures data integrity
+- **Up-to-Date**: Query real-time data from PDB and UniProt APIs
+- **Extensible**: Easily add more tools and data sources
+
+### MCP Server Features
+
+This ATOMICA MCP server provides:
+- **8 Tools** for querying protein structures and metadata
+- **2 Resources** for documentation and schema information
+- **Automatic dataset management** - downloads data on first use
+- **Fast queries** with Polars-based indexing
+- **Robust error handling** with structured logging
+
+### Configuration
+
+See the [Configuration](#configuration) section above for detailed setup instructions for Claude Desktop and other MCP clients.
+
+### Example Conversations
+
+**Querying Longevity Proteins:**
+```
+You: "Show me all structures for the oxidative stress response protein KEAP1"
+
+Claude: [Uses atomica_search_by_gene("KEAP1")]
+"I found 47 KEAP1 structures in the ATOMICA dataset. Here are some notable ones:
+- 1U6D: Kelch domain of Keap1
+- 4IQK: KEAP1 in complex with NRF2
+..."
+```
+
+**Cross-Protein Analysis:**
+```
+You: "What's the relationship between KEAP1 and NRF2 structures?"
+
+Claude: [Uses atomica_search_by_gene() for both proteins]
+"KEAP1 and NRF2 form a critical oxidative stress response complex. 
+The ATOMICA dataset contains:
+- 47 KEAP1 structures
+- 19 NRF2 structures
+- Several complex structures showing their interaction..."
+```
+
+**Arbitrary PDB Queries:**
+```
+You: "Get me information about PDB structure 1TUP"
+
+Claude: [Uses atomica_resolve_pdb("1tup")]
+"1TUP is the tumor suppressor protein p53 DNA-binding domain from 
+Homo sapiens. UniProt ID: P04637, Gene: TP53..."
+```
+
+### Learn More
+
+- **MCP Specification**: [modelcontextprotocol.io](https://modelcontextprotocol.io/)
+- **MCP Course**: [deeplearning.ai MCP course](https://www.deeplearning.ai/short-courses/mcp-build-rich-context-ai-apps-with-anthropic/)
+- **FastMCP Framework**: [github.com/jlowin/fastmcp](https://github.com/jlowin/fastmcp)
 
 ## Related Projects
 
@@ -351,13 +744,13 @@ For issues, questions, or suggestions, please open an issue on GitHub.
 
 ## Citation
 
-If you use pdb-mcp in your research, please cite:
+If you use atomica-mcp in your research, please cite:
 
 ```bibtex
-@software{pdb-mcp,
-  title={pdb-mcp: MCP server for PDB structure queries and protein resolution},
+@software{atomica-mcp,
+  title={atomica-mcp: MCP server for ATOMICA longevity proteins dataset},
   author={Kulaga, Anton and contributors},
   year={2025},
-  url={https://github.com/longevity-genie/pdb-mcp}
+  url={https://github.com/longevity-genie/atomica-mcp}
 }
 ```

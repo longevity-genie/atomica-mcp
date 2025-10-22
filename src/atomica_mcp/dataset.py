@@ -268,6 +268,202 @@ def list_files(
 
 
 @app.command()
+def reorganize(
+    dataset_dir: Path = typer.Option(
+        Path("data/input/atomica_longevity_proteins"),
+        "--dataset-dir", "-d",
+        help="Directory containing the ATOMICA longevity proteins dataset"
+    ),
+    index_file: Path = typer.Option(
+        Path("data/output/atomica_index.parquet"),
+        "--index", "-i",
+        help="Index parquet file to update"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be done without actually moving files"
+    )
+) -> None:
+    """
+    Reorganize dataset files into per-PDB folders and update paths to be relative.
+    
+    This command:
+    1. Creates a folder for each PDB ID (e.g., 1b68/)
+    2. Moves all related files into that folder (e.g., 1b68.cif, 1b68_metadata.json)
+    3. Updates the index parquet to use paths relative to dataset root
+    
+    Examples:
+        # Reorganize dataset
+        dataset reorganize
+        
+        # Dry run to see what would be done
+        dataset reorganize --dry-run
+        
+        # Use custom paths
+        dataset reorganize --dataset-dir data/atomica --index data/index.parquet
+    """
+    # Set up logging
+    setup_logging("reorganize_dataset")
+    
+    with start_action(action_type="reorganize_dataset", dataset_dir=str(dataset_dir), index=str(index_file), dry_run=dry_run) as action:
+        if not dataset_dir.exists():
+            typer.echo(f"❌ Dataset directory not found: {dataset_dir}", err=True)
+            raise typer.Exit(code=1)
+        
+        if not index_file.exists():
+            typer.echo(f"❌ Index file not found: {index_file}", err=True)
+            raise typer.Exit(code=1)
+        
+        # Make paths absolute for processing
+        dataset_dir = dataset_dir.resolve()
+        index_file = index_file.resolve()
+        
+        typer.echo(f"📦 Reorganizing ATOMICA dataset: {dataset_dir}")
+        typer.echo(f"📊 Index file: {index_file}")
+        if dry_run:
+            typer.echo("🔍 DRY RUN MODE - No files will be moved")
+        
+        # Load the index
+        typer.echo("\n📖 Loading index...")
+        df = pl.read_parquet(index_file)
+        typer.echo(f"✓ Found {len(df)} structures in index")
+        
+        # Find all PDB IDs
+        pdb_ids = df['pdb_id'].to_list()
+        
+        # Track statistics
+        moved_files = 0
+        created_folders = 0
+        updated_paths = 0
+        skipped_files = 0
+        
+        # Process each PDB ID
+        typer.echo("\n🔧 Reorganizing files...")
+        for i, pdb_id in enumerate(pdb_ids, 1):
+            pdb_id_lower = pdb_id.lower()
+            pdb_folder = dataset_dir / pdb_id_lower
+            
+            with start_action(action_type="reorganize_pdb", pdb_id=pdb_id) as pdb_action:
+                # Create folder if it doesn't exist
+                if not pdb_folder.exists():
+                    if not dry_run:
+                        pdb_folder.mkdir(parents=True, exist_ok=True)
+                    created_folders += 1
+                    typer.echo(f"  [{i}/{len(pdb_ids)}] {pdb_id}: Created folder")
+                else:
+                    typer.echo(f"  [{i}/{len(pdb_ids)}] {pdb_id}: Folder exists")
+                
+                # Find all files for this PDB
+                file_patterns = [
+                    f"{pdb_id_lower}.cif",
+                    f"{pdb_id_lower}_metadata.json",
+                    f"{pdb_id_lower}_summary.json",
+                    f"{pdb_id_lower}_critical_residues.tsv",
+                    f"{pdb_id_lower}_interact_scores.json",
+                    f"{pdb_id_lower}_pymol_commands.pml"
+                ]
+                
+                for pattern in file_patterns:
+                    src_file = dataset_dir / pattern
+                    dst_file = pdb_folder / pattern
+                    
+                    if src_file.exists() and src_file.parent == dataset_dir:
+                        # File exists in root and needs to be moved
+                        if not dry_run:
+                            src_file.rename(dst_file)
+                        moved_files += 1
+                        pdb_action.log(message_type="file_moved", file=pattern)
+                    elif dst_file.exists():
+                        # File already in correct location
+                        skipped_files += 1
+                
+        # Update the index with relative paths
+        typer.echo("\n📝 Updating index paths...")
+        
+        def make_relative_path(path_str: Optional[str]) -> Optional[str]:
+            """Convert absolute or project-relative path to dataset-relative path."""
+            if path_str is None:
+                return None
+            path = Path(path_str)
+            # If path is absolute or starts with data/input/atomica_longevity_proteins
+            if path.is_absolute():
+                try:
+                    rel = path.relative_to(dataset_dir)
+                    return str(rel)
+                except ValueError:
+                    return str(path)
+            else:
+                # Remove data/input/atomica_longevity_proteins prefix if present
+                parts = path.parts
+                if "atomica_longevity_proteins" in parts:
+                    idx = parts.index("atomica_longevity_proteins")
+                    rel_parts = parts[idx + 1:]
+                    if rel_parts:
+                        return str(Path(*rel_parts))
+                return str(path)
+        
+        # Update each path column
+        path_columns = [
+            'cif_path',
+            'metadata_path',
+            'summary_path',
+            'critical_residues_path',
+            'interact_scores_path',
+            'pymol_path'
+        ]
+        
+        # Only process columns that actually exist in the dataframe
+        existing_path_columns = [col for col in path_columns if col in df.columns]
+        
+        # Update all path columns at once
+        for col in existing_path_columns:
+            # Create a new column with updated paths
+            df = df.with_columns(
+                pl.when(pl.col(col).is_not_null())
+                .then(pl.col('pdb_id').str.to_lowercase() + "/" + pl.col(col).map_elements(lambda x: Path(x).name, return_dtype=pl.String))
+                .otherwise(None)
+                .alias(col)
+            )
+        
+        updated_paths = len(existing_path_columns)
+        
+        # Save updated index
+        if not dry_run:
+            typer.echo(f"💾 Saving updated index to: {index_file}")
+            df.write_parquet(index_file)
+        else:
+            typer.echo(f"💾 Would save updated index to: {index_file}")
+        
+        # Show sample of updated paths
+        typer.echo("\n📋 Sample of updated paths:")
+        sample_df = df.select(['pdb_id', 'cif_path', 'metadata_path']).head(3)
+        typer.echo(sample_df)
+        
+        # Summary
+        typer.echo("\n" + "="*60)
+        typer.echo("📊 Reorganization Summary:")
+        typer.echo(f"  📁 Folders created: {created_folders}")
+        typer.echo(f"  📦 Files moved: {moved_files}")
+        typer.echo(f"  ⊘ Files already in place: {skipped_files}")
+        typer.echo(f"  ✏️  Path columns updated: {updated_paths}")
+        typer.echo(f"  📍 All paths now relative to: {dataset_dir.name}/")
+        typer.echo("="*60)
+        
+        if dry_run:
+            typer.echo("\n🔍 This was a DRY RUN. Run without --dry-run to apply changes.")
+        else:
+            typer.echo("\n✅ Dataset reorganization completed successfully!")
+        
+        action.log(
+            message_type="reorganize_complete",
+            folders_created=created_folders,
+            files_moved=moved_files,
+            paths_updated=updated_paths
+        )
+
+
+@app.command()
 def info(
     repo_id: str = typer.Option(
         "longevity-genie/atomica_longevity_proteins",
