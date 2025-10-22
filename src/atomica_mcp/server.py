@@ -22,9 +22,10 @@ from contextlib import asynccontextmanager
 import typer
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
-from eliot import start_action
+from eliot import start_action, to_file, Logger
 from huggingface_hub import hf_hub_download
 import polars as pl
+from pycomfort.logging import to_nice_file
 
 from atomica_mcp.dataset import get_hf_filesystem, resolve_pdb_metadata
 from atomica_mcp.mining.pdb_metadata import get_pdb_metadata, get_structures_for_uniprot
@@ -216,6 +217,7 @@ class AtomicaMCP(FastMCP):
         dataset_dir: Optional[Path] = None,
         index_path: Optional[Path] = None,
         timeout: int = DEFAULT_TIMEOUT,
+        log_to_file: bool = True,
         **kwargs
     ):
         """
@@ -226,13 +228,27 @@ class AtomicaMCP(FastMCP):
             dataset_dir: Path to dataset directory (auto-detected if None)
             index_path: Path to index file (default: {dataset_dir}/atomica_index.parquet)
             timeout: Timeout for external API requests in seconds (default: 30)
+            log_to_file: Whether to log to files in logs/ directory (default: True)
             **kwargs: Additional arguments for FastMCP
         """
+        # Configure eliot logging to file to avoid stdout interference with stdio transport
+        if log_to_file:
+            log_dir = Path(__file__).parent.parent.parent / "logs"
+            log_dir.mkdir(exist_ok=True)
+            json_log = log_dir / "mcp_server.json"
+            rendered_log = log_dir / "mcp_server.log"
+            to_file(open(str(json_log), "w"))
+            to_nice_file(json_log, rendered_log)
+            # Keep only the last destination to avoid duplicate logging
+            if len(Logger._destinations._destinations) > 1:
+                Logger._destinations._destinations = [Logger._destinations._destinations[-1]]
+        
         super().__init__(name=name, **kwargs)
         
         # Setup paths
         self.dataset_dir = dataset_dir or get_dataset_directory()
-        self.index_path = index_path or DEFAULT_INDEX_PATH
+        # Index path should be relative to the actual dataset directory, not the default one
+        self.index_path = index_path or (self.dataset_dir / "atomica_index.parquet")
         self.timeout = timeout
         
         # Ensure dataset is available (with timeout consideration)
@@ -695,9 +711,9 @@ Query patterns:
                             "title": row.get("title"),
                             "uniprot_ids": row.get("uniprot_ids", []),
                             "gene_symbols": row.get("gene_symbols", []),
-                            "interact_scores_path": self._resolve_path(row.get("interact_scores_path")),
-                            "critical_residues_path": self._resolve_path(row.get("critical_residues_path")),
-                            "pymol_path": self._resolve_path(row.get("pymol_path")),
+                            "interact_scores_path": row.get("interact_scores_path"),
+                            "critical_residues_path": row.get("critical_residues_path"),
+                            "pymol_path": row.get("pymol_path"),
                         }
                         for row in results.iter_rows(named=True)
                     ]
@@ -743,9 +759,9 @@ Query patterns:
                     "title": row.get("title"),
                     "uniprot_ids": row.get("uniprot_ids", []),
                     "gene_symbols": row.get("gene_symbols", []),
-                    "interact_scores_path": self._resolve_path(row.get("interact_scores_path")),
-                    "critical_residues_path": self._resolve_path(row.get("critical_residues_path")),
-                    "pymol_path": self._resolve_path(row.get("pymol_path")),
+                    "interact_scores_path": row.get("interact_scores_path"),
+                    "critical_residues_path": row.get("critical_residues_path"),
+                    "pymol_path": row.get("pymol_path"),
                 }
                 for row in results.iter_rows(named=True)
             ]
@@ -774,26 +790,30 @@ Query patterns:
         - Critical residues TSV (critical_residues_path)  
         - PyMOL visualization commands PML (pymol_path)
         
+        **Note**: File paths are relative to the dataset directory. Use the 'dataset_directory' field
+        in the response to construct absolute paths if needed.
+        
         Performance: ~0.003 seconds (instant)
         
         Args:
             uniprot_id: UniProt accession (e.g., 'Q14145' for KEAP1, 'P04637' for TP53)
         
         Returns:
-            Dictionary with matching structures including ATOMICA data file paths
+            Dictionary with matching structures including ATOMICA data file paths (relative)
             
         Example:
             >>> search_by_uniprot('Q14145')  # KEAP1
             {
                 "uniprot_id": "Q14145",
+                "dataset_directory": "/path/to/atomica_longevity_proteins",
                 "structures": [
                     {
                         "pdb_id": "1U6D",
                         "uniprot_ids": ["Q14145"],
                         "gene_symbols": ["KEAP1"],
-                        "interact_scores_path": ".../1u6d_interact_scores.json",
-                        "critical_residues_path": ".../1u6d_critical_residues.tsv",
-                        "pymol_path": ".../1u6d_pymol_commands.pml"
+                        "interact_scores_path": "1u6d/1u6d_interact_scores.json",
+                        "critical_residues_path": "1u6d/1u6d_critical_residues.tsv",
+                        "pymol_path": "1u6d/1u6d_pymol_commands.pml"
                     },
                     # ... 55 more KEAP1 structures
                 ],
@@ -828,9 +848,9 @@ Query patterns:
                     "title": row.get("title"),
                     "uniprot_ids": row.get("uniprot_ids", []),
                     "gene_symbols": row.get("gene_symbols", []),
-                    "interact_scores_path": self._resolve_path(row.get("interact_scores_path")),
-                    "critical_residues_path": self._resolve_path(row.get("critical_residues_path")),
-                    "pymol_path": self._resolve_path(row.get("pymol_path")),
+                    "interact_scores_path": row.get("interact_scores_path"),
+                    "critical_residues_path": row.get("critical_residues_path"),
+                    "pymol_path": row.get("pymol_path"),
                 }
                 for row in results.iter_rows(named=True)
             ]
@@ -839,6 +859,7 @@ Query patterns:
             
             return {
                 "uniprot_id": uniprot_id,
+                "dataset_directory": str(self.dataset_dir),
                 "structures": structures,
                 "count": len(structures)
             }

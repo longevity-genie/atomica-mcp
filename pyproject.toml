@@ -1,6 +1,6 @@
 [project]
 name = "atomica-mcp"
-version = "0.1.3"
+version = "0.1.5"
 description = "MCP server for PDB structure queries and protein resolution using AnAge database"
 readme = "README.md"
 authors = [

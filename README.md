@@ -110,10 +110,10 @@ This approach handles gene aliases automatically (e.g., "NRF2" resolves to "NFE2
 
 **Example:**
 ```python
-atomica_search_by_gene("KEAP1")  # Human by default
+atomica_search_by_gene("KEAP1")  # Human by default - 56 structures
 atomica_search_by_gene("KEAP1", "Homo sapiens")  # Human by Latin name
-atomica_search_by_gene("NRF2", "9606")  # Resolves to NFE2L2
-atomica_search_by_gene("Trp53", "Mus musculus")  # Mouse p53
+atomica_search_by_gene("NFE2L2")  # NRF2 gene - 19 structures
+atomica_search_by_gene("APOE", "9606")  # APOE gene - 9 structures
 ```
 
 #### 5. `atomica_search_by_uniprot(uniprot_id: str)`
@@ -126,8 +126,9 @@ Search ATOMICA dataset for structures by UniProt ID. Direct index lookup - faste
 
 **Example:**
 ```python
-atomica_search_by_uniprot("Q14145")  # KEAP1
-atomica_search_by_uniprot("P04637")  # TP53
+atomica_search_by_uniprot("Q14145")  # KEAP1 - 56 structures
+atomica_search_by_uniprot("P02649")  # APOE - 8 structures
+atomica_search_by_uniprot("Q16236")  # NFE2L2 (NRF2) - 19 structures
 ```
 
 #### 6. `atomica_search_by_organism(organism: str)`
