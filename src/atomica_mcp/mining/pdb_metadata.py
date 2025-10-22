@@ -172,7 +172,7 @@ def get_gene_symbol(uniprot_id: str) -> Optional[str]:
 
 def get_uniprot_info(uniprot_id: str) -> Optional[Dict[str, Any]]:
     """
-    Get comprehensive UniProt information.
+    Get comprehensive UniProt information including Ensembl IDs.
     
     Args:
         uniprot_id: UniProt accession number
@@ -192,6 +192,7 @@ def get_uniprot_info(uniprot_id: str) -> Optional[Dict[str, Any]]:
             "organism": None,
             "tax_id": None,
             "sequence_length": None,
+            "ensembl_ids": [],
         }
         
         # Extract protein name
@@ -214,8 +215,47 @@ def get_uniprot_info(uniprot_id: str) -> Optional[Dict[str, Any]]:
         if "sequence" in data:
             info["sequence_length"] = data["sequence"]["length"]
         
+        # Extract Ensembl IDs from cross-references
+        if "uniProtKBCrossReferences" in data:
+            for xref in data["uniProtKBCrossReferences"]:
+                db_name = xref.get("database", "")
+                if db_name in ["Ensembl", "EnsemblGenome"]:
+                    ensembl_id = xref.get("id")
+                    if ensembl_id:
+                        info["ensembl_ids"].append(ensembl_id)
+        
         action.log(message_type="uniprot_info_retrieved", info=info)
         return info
+
+
+def get_uniprot_info_batch(uniprot_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    Get comprehensive UniProt information for multiple IDs in batch.
+    
+    Args:
+        uniprot_ids: List of UniProt accession numbers
+        
+    Returns:
+        Dictionary mapping UniProt ID to its information (or None if not found)
+    """
+    with start_action(action_type="get_uniprot_info_batch", count=len(uniprot_ids)) as action:
+        results: Dict[str, Optional[Dict[str, Any]]] = {}
+        
+        # Process in batches of 10 to avoid overwhelming the API
+        batch_size = 10
+        for i in range(0, len(uniprot_ids), batch_size):
+            batch = uniprot_ids[i:i+batch_size]
+            
+            for uniprot_id in batch:
+                try:
+                    info = get_uniprot_info(uniprot_id)
+                    results[uniprot_id] = info
+                except Exception as e:
+                    action.log(message_type="batch_fetch_error", uniprot_id=uniprot_id, error=str(e))
+                    results[uniprot_id] = None
+        
+        action.log(message_type="batch_fetch_complete", success=len([v for v in results.values() if v is not None]))
+        return results
 
 
 def get_pdb_structures_from_uniprot(uniprot_id: str) -> List[str]:

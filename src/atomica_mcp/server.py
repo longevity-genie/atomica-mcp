@@ -32,7 +32,8 @@ from atomica_mcp.mining.pdb_metadata import get_pdb_metadata, get_structures_for
 # Hugging Face repository configuration
 HF_REPO_ID = "longevity-genie/atomica_longevity_proteins"
 DEFAULT_DATASET_DIR = Path("data/input/atomica_longevity_proteins")
-DEFAULT_INDEX_PATH = Path("data/output/atomica_index.parquet")
+# Index is now saved in the dataset directory by default
+DEFAULT_INDEX_PATH = DEFAULT_DATASET_DIR / "atomica_index.parquet"
 
 # Configuration
 DEFAULT_HOST = os.getenv("MCP_HOST", "0.0.0.0")
@@ -223,7 +224,7 @@ class AtomicaMCP(FastMCP):
         Args:
             name: Server name
             dataset_dir: Path to dataset directory (auto-detected if None)
-            index_path: Path to index file (default: data/output/atomica_index.parquet)
+            index_path: Path to index file (default: {dataset_dir}/atomica_index.parquet)
             timeout: Timeout for external API requests in seconds (default: 30)
             **kwargs: Additional arguments for FastMCP
         """

@@ -515,7 +515,7 @@ def resolve_pdb_metadata(pdb_id: str) -> Dict[str, Any]:
     
     Returns:
         Dictionary with protein metadata including UniProt IDs, organisms, gene symbols,
-        structure information, and complex details
+        Ensembl IDs, structure information, and complex details
     """
     from atomica_mcp.mining.pdb_metadata import get_pdb_metadata
     
@@ -533,6 +533,7 @@ def resolve_pdb_metadata(pdb_id: str) -> Dict[str, Any]:
                 "organisms": [],
                 "taxonomy_ids": [],
                 "gene_symbols": [],
+                "ensembl_ids": [],
                 "title": None,
                 "structures": []
             }
@@ -546,13 +547,15 @@ def resolve_pdb_metadata(pdb_id: str) -> Dict[str, Any]:
             "gene_symbols": pdb_metadata.gene_symbols,
             "organisms": [pdb_metadata.organism] if pdb_metadata.organism else [],
             "taxonomy_ids": [pdb_metadata.organism_tax_id] if pdb_metadata.organism_tax_id else [],
+            "ensembl_ids": [],
             "structures": [s.to_dict() for s in pdb_metadata.structures]
         }
         
         action.log(
             message_type="pdb_metadata_resolved",
             uniprot_count=len(result["uniprot_ids"]),
-            gene_count=len(result["gene_symbols"])
+            gene_count=len(result["gene_symbols"]),
+            organism=result["organisms"][0] if result["organisms"] else None
         )
         
         return result
@@ -570,6 +573,11 @@ def index(
         "--output", "-o",
         help="Output file for the dataset index (parquet format)"
     ),
+    save_to_dataset: bool = typer.Option(
+        True,
+        "--save-to-dataset/--no-save-to-dataset",
+        help="Also save index to dataset directory as atomica_index.parquet"
+    ),
     include_metadata: bool = typer.Option(
         False,
         "--include-metadata",
@@ -582,7 +590,7 @@ def index(
     Generates a comprehensive index DataFrame with:
     - PDB ID
     - Paths to all related files (CIF, metadata, summary, critical residues, etc.)
-    - Resolved protein metadata (UniProt IDs, organisms, taxonomy IDs, gene symbols, structures)
+    - Resolved protein metadata (UniProt IDs, organisms, taxonomy IDs, gene symbols, Ensembl IDs, structures)
     - Counts and statistics from files
     
     The index is saved as a Parquet file for efficient querying and analysis.
@@ -610,8 +618,8 @@ def index(
         typer.echo(f"📦 Indexing ATOMICA dataset: {dataset_dir}")
         typer.echo(f"📊 Building comprehensive index with metadata resolution...")
         
-        # Find all PDB IDs by looking for .cif files
-        cif_files = sorted(dataset_dir.glob("*.cif"))
+        # Find all PDB IDs by looking for .cif files (in subdirectories)
+        cif_files = sorted(dataset_dir.glob("**/*.cif"))
         
         if not cif_files:
             typer.echo("❌ No CIF files found in dataset directory", err=True)
@@ -622,24 +630,43 @@ def index(
         # Build index records
         records: List[Dict[str, Any]] = []
         
+        # Step 1: Collect all PDB IDs and basic file info
+        pdb_data = []
         for i, cif_file in enumerate(cif_files, 1):
             pdb_id = cif_file.stem
+            pdb_dir = cif_file.parent
+            
+            # Define expected file paths (relative to parent directory)
+            cif_path = cif_file
+            metadata_path = pdb_dir / f"{pdb_id}_metadata.json"
+            summary_path = pdb_dir / f"{pdb_id}_summary.json"
+            critical_residues_path = pdb_dir / f"{pdb_id}_critical_residues.tsv"
+            interact_scores_path = pdb_dir / f"{pdb_id}_interact_scores.json"
+            pymol_path = pdb_dir / f"{pdb_id}_pymol_commands.pml"
+            
+            pdb_data.append({
+                "pdb_id": pdb_id,
+                "cif_path": cif_path,
+                "metadata_path": metadata_path,
+                "summary_path": summary_path,
+                "critical_residues_path": critical_residues_path,
+                "interact_scores_path": interact_scores_path,
+                "pymol_path": pymol_path,
+            })
+        
+        # Step 2: Resolve metadata for all PDB IDs (one by one but with progress tracking)
+        typer.echo(f"\n🔬 Resolving metadata for {len(pdb_data)} structures...")
+        
+        for i, pdb_info in enumerate(pdb_data, 1):
+            pdb_id = pdb_info["pdb_id"]
             
             with start_action(action_type="index_pdb", pdb_id=pdb_id) as pdb_action:
-                # Define expected file paths
-                cif_path = cif_file
-                metadata_path = dataset_dir / f"{pdb_id}_metadata.json"
-                summary_path = dataset_dir / f"{pdb_id}_summary.json"
-                critical_residues_path = dataset_dir / f"{pdb_id}_critical_residues.tsv"
-                interact_scores_path = dataset_dir / f"{pdb_id}_interact_scores.json"
-                pymol_path = dataset_dir / f"{pdb_id}_pymol_commands.pml"
-                
                 # Read metadata JSON if it exists (for quick lookup)
                 metadata_json: Optional[Dict[str, Any]] = None
-                if metadata_path.exists():
-                    with start_action(action_type="read_metadata_json", path=str(metadata_path)) as read_action:
+                if pdb_info["metadata_path"].exists():
+                    with start_action(action_type="read_metadata_json", path=str(pdb_info["metadata_path"])) as read_action:
                         try:
-                            with open(metadata_path, 'r') as f:
+                            with open(pdb_info["metadata_path"], 'r') as f:
                                 metadata_json = json.load(f)
                             read_action.log(message_type="metadata_json_loaded")
                         except Exception as e:
@@ -647,10 +674,10 @@ def index(
                 
                 # Read summary JSON if it exists
                 summary_json: Optional[Dict[str, Any]] = None
-                if summary_path.exists():
-                    with start_action(action_type="read_summary_json", path=str(summary_path)) as read_action:
+                if pdb_info["summary_path"].exists():
+                    with start_action(action_type="read_summary_json", path=str(pdb_info["summary_path"])) as read_action:
                         try:
-                            with open(summary_path, 'r') as f:
+                            with open(pdb_info["summary_path"], 'r') as f:
                                 summary_json = json.load(f)
                             read_action.log(message_type="summary_json_loaded")
                         except Exception as e:
@@ -658,10 +685,10 @@ def index(
                 
                 # Count critical residues if file exists
                 critical_residues_count: Optional[int] = None
-                if critical_residues_path.exists():
-                    with start_action(action_type="count_critical_residues", path=str(critical_residues_path)) as count_action:
+                if pdb_info["critical_residues_path"].exists():
+                    with start_action(action_type="count_critical_residues", path=str(pdb_info["critical_residues_path"])) as count_action:
                         try:
-                            with open(critical_residues_path, 'r') as f:
+                            with open(pdb_info["critical_residues_path"], 'r') as f:
                                 # Count non-comment, non-empty lines
                                 critical_residues_count = sum(1 for line in f if line.strip() and not line.startswith('#'))
                             count_action.log(message_type="residues_counted", count=critical_residues_count)
@@ -669,13 +696,14 @@ def index(
                             count_action.log(message_type="critical_residues_count_error", error=str(e))
                 
                 # Resolve protein metadata using comprehensive PDB mining
-                typer.echo(f"  [{i}/{len(cif_files)}] Resolving metadata for {pdb_id}...", nl=False)
+                typer.echo(f"  [{i}/{len(pdb_data)}] Resolving metadata for {pdb_id}...", nl=False)
                 resolved_metadata = resolve_pdb_metadata(pdb_id)
                 
                 if resolved_metadata.get("found"):
                     uniprot_count = len(resolved_metadata.get('uniprot_ids', []))
                     gene_count = len(resolved_metadata.get('gene_symbols', []))
-                    typer.echo(f" ✓ ({uniprot_count} UniProt IDs, {gene_count} genes)")
+                    organism = resolved_metadata.get('organisms', [])[0] if resolved_metadata.get('organisms') else None
+                    typer.echo(f" ✓ ({uniprot_count} UniProt, {gene_count} genes, {organism or 'no organism'})")
                 else:
                     error_msg = resolved_metadata.get("error", "Unknown error")
                     typer.echo(f" ⚠ {error_msg}")
@@ -683,13 +711,13 @@ def index(
                 # Build record (without boolean flags - can be computed via queries)
                 record = {
                     "pdb_id": pdb_id.upper(),
-                    # File paths (None if not exist)
-                    "cif_path": str(cif_path),
-                    "metadata_path": str(metadata_path) if metadata_path.exists() else None,
-                    "summary_path": str(summary_path) if summary_path.exists() else None,
-                    "critical_residues_path": str(critical_residues_path) if critical_residues_path.exists() else None,
-                    "interact_scores_path": str(interact_scores_path) if interact_scores_path.exists() else None,
-                    "pymol_path": str(pymol_path) if pymol_path.exists() else None,
+                    # File paths (relative to dataset dir or None if not exist)
+                    "cif_path": str(pdb_info["cif_path"].relative_to(dataset_dir)) if pdb_info["cif_path"].exists() else None,
+                    "metadata_path": str(pdb_info["metadata_path"].relative_to(dataset_dir)) if pdb_info["metadata_path"].exists() else None,
+                    "summary_path": str(pdb_info["summary_path"].relative_to(dataset_dir)) if pdb_info["summary_path"].exists() else None,
+                    "critical_residues_path": str(pdb_info["critical_residues_path"].relative_to(dataset_dir)) if pdb_info["critical_residues_path"].exists() else None,
+                    "interact_scores_path": str(pdb_info["interact_scores_path"].relative_to(dataset_dir)) if pdb_info["interact_scores_path"].exists() else None,
+                    "pymol_path": str(pdb_info["pymol_path"].relative_to(dataset_dir)) if pdb_info["pymol_path"].exists() else None,
                     # Counts and stats
                     "critical_residues_count": critical_residues_count,
                     "total_time_seconds": summary_json.get("total_time_seconds") if summary_json else None,
@@ -701,6 +729,7 @@ def index(
                     "organisms": resolved_metadata.get("organisms", []),
                     "taxonomy_ids": resolved_metadata.get("taxonomy_ids", []),
                     "gene_symbols": resolved_metadata.get("gene_symbols", []),
+                    "ensembl_ids": resolved_metadata.get("ensembl_ids", []),
                     # Convert structures to JSON string to avoid Parquet serialization issues
                     "structures_json": json.dumps(resolved_metadata.get("structures", [])) if resolved_metadata.get("structures") else None,
                 }
@@ -719,6 +748,49 @@ def index(
                     organisms=resolved_metadata.get("organisms", [])
                 )
         
+        # Step 3: Batch-resolve Ensembl IDs and organisms for all UniProt IDs
+        typer.echo("\n🧬 Batch-resolving Ensembl IDs and organisms for all UniProt IDs...")
+        
+        # Collect all unique UniProt IDs
+        all_uniprot_ids = set()
+        for record in records:
+            all_uniprot_ids.update(record.get("uniprot_ids", []))
+        
+        if all_uniprot_ids:
+            from atomica_mcp.mining.pdb_metadata import get_uniprot_info_batch
+            
+            typer.echo(f"  Found {len(all_uniprot_ids)} unique UniProt IDs to resolve")
+            uniprot_info_map = get_uniprot_info_batch(list(all_uniprot_ids))
+            
+            # Update records with Ensembl IDs and organism info from UniProt
+            for record in records:
+                ensembl_ids_set = set()
+                organisms_set = set()
+                taxonomy_ids_set = set()
+                
+                for uniprot_id in record.get("uniprot_ids", []):
+                    uniprot_info = uniprot_info_map.get(uniprot_id)
+                    if uniprot_info:
+                        # Add Ensembl IDs
+                        if "ensembl_ids" in uniprot_info:
+                            ensembl_ids_set.update(uniprot_info["ensembl_ids"])
+                        
+                        # Add organism info from UniProt (more reliable than PDB)
+                        if uniprot_info.get("organism"):
+                            organisms_set.add(uniprot_info["organism"])
+                        if uniprot_info.get("tax_id"):
+                            taxonomy_ids_set.add(uniprot_info["tax_id"])
+                
+                record["ensembl_ids"] = list(ensembl_ids_set)
+                # Override organisms and taxonomy_ids with UniProt data
+                if organisms_set:
+                    record["organisms"] = list(organisms_set)
+                if taxonomy_ids_set:
+                    record["taxonomy_ids"] = list(taxonomy_ids_set)
+            
+            typer.echo(f"  ✓ Resolved Ensembl IDs for {len([r for r in records if r['ensembl_ids']])} structures")
+            typer.echo(f"  ✓ Resolved organisms for {len([r for r in records if r['organisms']])} structures")
+        
         # Create DataFrame
         typer.echo("\n📊 Creating index DataFrame...")
         df = pl.DataFrame(records)
@@ -726,9 +798,15 @@ def index(
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
-        # Save to Parquet
+        # Save to primary output location
         typer.echo(f"💾 Saving index to: {output_file}")
         df.write_parquet(output_file)
+        
+        # Also save to dataset directory if requested
+        if save_to_dataset:
+            dataset_index_path = dataset_dir / "atomica_index.parquet"
+            typer.echo(f"💾 Saving index to dataset directory: {dataset_index_path}")
+            df.write_parquet(dataset_index_path)
         
         # Print summary statistics
         typer.echo("\n" + "="*60)
@@ -744,11 +822,13 @@ def index(
         typer.echo(f"  Complete datasets (all files): {complete_count}")
         typer.echo(f"  With metadata resolved: {df.filter(pl.col('metadata_found')).height}")
         
-        # Count total UniProt IDs and genes
+        # Count total UniProt IDs, genes, and Ensembl IDs
         total_uniprot = sum(len(ids) for ids in df['uniprot_ids'].to_list())
         total_genes = sum(len(genes) for genes in df['gene_symbols'].to_list())
+        total_ensembl = sum(len(ids) for ids in df['ensembl_ids'].to_list())
         typer.echo(f"  Total UniProt IDs: {total_uniprot}")
         typer.echo(f"  Total gene symbols: {total_genes}")
+        typer.echo(f"  Total Ensembl IDs: {total_ensembl}")
         
         # Show organism distribution
         all_organisms = [org for orgs in df['organisms'].to_list() for org in orgs if org]
@@ -761,6 +841,8 @@ def index(
                 typer.echo(f"    • {org}: {count} structures")
         
         typer.echo(f"\n  📁 Index saved: {output_file.resolve()}")
+        if save_to_dataset:
+            typer.echo(f"  📁 Also saved to: {(dataset_dir / 'atomica_index.parquet').resolve()}")
         typer.echo("="*60)
         
         typer.echo("\n✅ Dataset indexing completed successfully!")
@@ -772,7 +854,8 @@ def index(
             total_structures=len(df),
             unique_organisms=len(set(org for orgs in df['organisms'].to_list() for org in orgs if org)),
             total_uniprot_ids=total_uniprot,
-            total_gene_symbols=total_genes
+            total_gene_symbols=total_genes,
+            total_ensembl_ids=total_ensembl
         )
 
 
