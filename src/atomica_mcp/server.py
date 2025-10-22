@@ -286,54 +286,78 @@ class AtomicaMCP(FastMCP):
         return data
     
     def _register_atomica_tools(self):
-        """Register ATOMICA-specific tools."""
+        """
+        Register ATOMICA-specific tools.
         
-        # Dataset query tools
+        IMPORTANT FOR LLMS:
+        - For ATOMICA scores, critical residues, PyMOL commands: Use atomica_search_* functions (FAST, local index)
+        - For general PDB metadata from entire PDB: Use atomica_get_structures_for_uniprot or atomica_resolve_pdb (SLOW, external APIs)
+        
+        The ATOMICA dataset has a local Polars index with UniProt -> PDB -> Files mapping:
+        - uniprot_ids column: List of UniProt IDs per structure
+        - interact_scores_path: Path to ATOMICA interaction scores JSON
+        - critical_residues_path: Path to ranked critical residues TSV
+        - pymol_path: Path to PyMOL visualization commands PML
+        """
+        
+        # ============================================================================
+        # ATOMICA DATASET QUERY TOOLS (FAST - Use these for ATOMICA analysis data!)
+        # ============================================================================
+        # These tools query the local Polars index and return ATOMICA-specific data
+        # (interaction scores, critical residues, PyMOL commands)
+        
         self.tool(
             name="atomica_list_structures",
-            description="List all PDB structures in the ATOMICA longevity proteins dataset (NRF2/NFE2L2, KEAP1, SOX2, APOE, OCT4/POU5F1)"
+            description="List all structures in ATOMICA longevity proteins dataset (NRF2, KEAP1, SOX2, APOE, OCT4). Returns basic info from local index. FAST (instant). Use to browse available ATOMICA structures."
         )(self.list_structures)
         
         self.tool(
             name="atomica_get_structure",
-            description="Get info about PDB structure including file paths for interaction scores, critical residues TSV, and PyMOL visualization commands. Example: atomica_get_structure('4iqk')"
+            description="Get ATOMICA analysis files for a specific PDB ID. Returns paths to interaction scores JSON, critical residues TSV, and PyMOL visualization commands PML. FAST (instant, local index lookup). Use when you have a PDB ID and need ATOMICA analysis files. Example: atomica_get_structure('4iqk')"
         )(self.get_structure)
         
         self.tool(
             name="atomica_get_structure_files",
-            description="Get file paths and check availability for PDB structure files (CIF structure, metadata, critical residues TSV, interaction scores JSON, PyMOL commands PML)"
+            description="Check file availability and get paths for a PDB structure in ATOMICA dataset (CIF, metadata, critical residues TSV, interaction scores JSON, PyMOL PML). FAST (instant, local check). Use to verify which ATOMICA files exist for a structure. Example: atomica_get_structure_files('1zgk')"
         )(self.get_structure_files)
         
         self.tool(
             name="atomica_search_by_gene",
-            description="Search by gene symbol. Supports taxonomy ID or Latin name (e.g., '9606'/'Homo sapiens', 'Mus musculus'). Example: atomica_search_by_gene('KEAP1', 'Homo sapiens')"
+            description="Search ATOMICA dataset by gene symbol (e.g. KEAP1, NRF2, APOE, SOX2, OCT4). Returns structures WITH ATOMICA scores, critical residues, PyMOL commands. FAST (instant, local index). USE THIS when user asks for ATOMICA data by gene. Supports species filter. Example: atomica_search_by_gene('KEAP1', 'Homo sapiens')"
         )(self.search_by_gene)
         
         self.tool(
             name="atomica_search_by_uniprot",
-            description="Search for structures by UniProt ID(s). Direct lookup in index, fast. Example: atomica_search_by_uniprot('Q14145')"
+            description="Search ATOMICA dataset by UniProt ID. Returns structures WITH ATOMICA interaction scores, critical residues TSV paths, and PyMOL visualization command paths. FAST (instant, uses local Polars index with uniprot_ids column). USE THIS IMMEDIATELY when user asks for 'ATOMICA scores of Q14145' or similar - it queries local index and returns file paths to all ATOMICA analysis data. Example: atomica_search_by_uniprot('Q14145') returns 56 KEAP1 structures with ATOMICA analysis paths in 0.003 seconds."
         )(self.search_by_uniprot)
         
         self.tool(
             name="atomica_search_by_organism",
-            description="Search by organism (best-effort, data often incomplete). Prefer search_by_gene with species for reliable results. Example: atomica_search_by_organism('Homo sapiens')"
+            description="Search ATOMICA dataset by organism name (e.g. 'Homo sapiens', 'human'). Returns structures WITH ATOMICA analysis data. FAST (instant, local index). Note: organism data is often incomplete; prefer atomica_search_by_gene with species parameter for reliable results. Example: atomica_search_by_organism('Homo sapiens')"
         )(self.search_by_organism)
         
-        # Auxiliary PDB tools
+        # ============================================================================
+        # AUXILIARY PDB TOOLS (SLOW - Only use when ATOMICA dataset is insufficient!)
+        # ============================================================================
+        # These tools query external PDB APIs and do NOT return ATOMICA analysis data
+        
         self.tool(
             name="atomica_resolve_pdb",
-            description="Resolve metadata for any PDB ID: UniProt IDs, gene symbols, organisms. Works beyond ATOMICA dataset. Example: atomica_resolve_pdb('1tup')"
+            description="Resolve general PDB metadata for ANY PDB ID (not limited to ATOMICA dataset): UniProt IDs, gene symbols, organisms, taxonomy. Makes external API calls. SLOW (~5-10 seconds per PDB). Does NOT return ATOMICA scores or analysis. Only use when you need metadata for PDB IDs outside ATOMICA dataset. Example: atomica_resolve_pdb('1tup')"
         )(self.resolve_pdb)
         
         self.tool(
             name="atomica_get_structures_for_uniprot",
-            description="Get all PDB structures for a UniProt ID with resolution, method, dates. Includes AlphaFold if available. Example: atomica_get_structures_for_uniprot('P04637')"
+            description="Get PDB structures for a UniProt ID. ALWAYS checks ATOMICA dataset index first (instant)! If found in ATOMICA, returns ATOMICA analysis data immediately. Only queries external PDB APIs (slow, 2-5 min) if UniProt NOT in ATOMICA dataset. Returns 'source' field indicating data origin: 'atomica_dataset' (has ATOMICA scores) or 'external_pdb' (no ATOMICA scores). For most queries, atomica_search_by_uniprot is preferred as it's explicitly for ATOMICA data. Example: atomica_get_structures_for_uniprot('Q14145') checks index first, finds KEAP1 in ATOMICA, returns in 0.003s with ATOMICA analysis."
         )(self.get_structures_for_uniprot)
         
-        # Dataset management tools
+        # ============================================================================
+        # DATASET INFORMATION TOOL
+        # ============================================================================
+        
         self.tool(
             name="atomica_dataset_info",
-            description="Get ATOMICA dataset statistics: structure counts, unique genes, organisms, repository info"
+            description="Get ATOMICA dataset statistics: total structure count, unique genes, organisms, repository info. FAST (instant, local index). Use to get overview of dataset contents."
         )(self.dataset_info)
     
     def _register_atomica_resources(self):
@@ -586,19 +610,30 @@ Query patterns:
     
     def search_by_gene(self, gene_symbol: str, species: str = "9606") -> Dict[str, Any]:
         """
-        Search for structures by gene symbol via UniProt ID resolution.
+        Search ATOMICA dataset by gene symbol (FAST - local Polars index query).
+        
+        **USE THIS for ATOMICA analysis queries by gene!**
+        When user asks for "ATOMICA scores for KEAP1" or "critical residues for NRF2",
+        this function queries the local index which has gene -> PDB -> Files mapping.
+        
+        Returns structures WITH paths to:
+        - ATOMICA interaction scores JSON (interact_scores_path)
+        - Critical residues TSV (critical_residues_path)
+        - PyMOL visualization commands PML (pymol_path)
+        
+        Performance: ~0.005 seconds (instant)
         
         Strategy:
         1. First try direct gene symbol match in index (fast)
         2. If no results, resolve gene→UniProt via API, then search by UniProt (robust)
         
         Args:
-            gene_symbol: Gene symbol (e.g., 'KEAP1', 'APOE', 'NRF2')
+            gene_symbol: Gene symbol (e.g., 'KEAP1', 'APOE', 'NRF2', 'SOX2', 'OCT4')
             species: Species as taxonomy ID or Latin name (default: '9606' for human)
                      Examples: "9606", "Homo sapiens", "10090", "Mus musculus"
         
         Returns:
-            Dictionary with matching structures including ATOMICA data paths
+            Dictionary with matching structures including ATOMICA data file paths
             
         Example:
             >>> search_by_gene('KEAP1')  # Human by default
@@ -616,11 +651,11 @@ Query patterns:
                         "pdb_id": "1U6D",
                         "uniprot_ids": ["Q14145"],
                         "gene_symbols": ["KEAP1"],
-                        "interact_scores_path": "/abs/path/to/1u6d_interact_scores.json",
-                        "critical_residues_path": "/abs/path/to/1u6d_critical_residues.tsv",
-                        "pymol_path": "/abs/path/to/1u6d_pymol_commands.pml"
+                        "interact_scores_path": "/path/to/1u6d_interact_scores.json",
+                        "critical_residues_path": "/path/to/1u6d_critical_residues.tsv",
+                        "pymol_path": "/path/to/1u6d_pymol_commands.pml"
                     },
-                    ...
+                    # ... 55 more KEAP1 structures
                 ],
                 "count": 56
             }
@@ -727,13 +762,24 @@ Query patterns:
     
     def search_by_uniprot(self, uniprot_id: str) -> Dict[str, Any]:
         """
-        Search for structures by UniProt ID. Direct index lookup.
+        Search ATOMICA dataset by UniProt ID (FAST - local Polars index query).
+        
+        **USE THIS for ATOMICA analysis queries!**
+        When user asks for "ATOMICA scores of Q14145" or "critical residues for UniProt Q14145",
+        this function queries the local Polars index which has UniProt -> PDB -> Files mapping.
+        
+        Returns structures WITH paths to:
+        - ATOMICA interaction scores JSON (interact_scores_path)
+        - Critical residues TSV (critical_residues_path)  
+        - PyMOL visualization commands PML (pymol_path)
+        
+        Performance: ~0.003 seconds (instant)
         
         Args:
-            uniprot_id: UniProt accession (e.g., 'Q14145', 'P04637')
+            uniprot_id: UniProt accession (e.g., 'Q14145' for KEAP1, 'P04637' for TP53)
         
         Returns:
-            Dictionary with matching structures including ATOMICA data paths
+            Dictionary with matching structures including ATOMICA data file paths
             
         Example:
             >>> search_by_uniprot('Q14145')  # KEAP1
@@ -744,12 +790,13 @@ Query patterns:
                         "pdb_id": "1U6D",
                         "uniprot_ids": ["Q14145"],
                         "gene_symbols": ["KEAP1"],
-                        "interact_scores_path": "...",
-                        "critical_residues_path": "...",
-                        "pymol_path": "..."
-                    }
+                        "interact_scores_path": ".../1u6d_interact_scores.json",
+                        "critical_residues_path": ".../1u6d_critical_residues.tsv",
+                        "pymol_path": ".../1u6d_pymol_commands.pml"
+                    },
+                    # ... 55 more KEAP1 structures
                 ],
-                "count": 47
+                "count": 56
             }
         """
         with start_action(action_type="search_by_uniprot", uniprot_id=uniprot_id) as action:
@@ -926,19 +973,61 @@ Query patterns:
             action.log(message_type="pdb_resolved", found=metadata.get("found", False))
             return metadata
     
-    def get_structures_for_uniprot(self, uniprot_id: str, include_alphafold: bool = True, max_structures: Optional[int] = None) -> Dict[str, Any]:
+    def get_structures_for_uniprot(self, uniprot_id: str, include_alphafold: bool = True, max_structures: Optional[int] = None, force_comprehensive: bool = False) -> Dict[str, Any]:
         """
-        Get all available PDB structures for a UniProt ID.
+        Get PDB structures for a UniProt ID.
+        
+        **Strategy**: ALWAYS checks ATOMICA dataset index first!
+        1. First check local ATOMICA index (instant) - returns ATOMICA analysis data if found
+        2. Only query external PDB APIs if:
+           - UniProt not in ATOMICA dataset, OR
+           - force_comprehensive=True (user explicitly wants all PDB structures)
         
         Args:
             uniprot_id: UniProt identifier (e.g., 'Q16236')
-            include_alphafold: Whether to include AlphaFold structures
+            include_alphafold: Whether to include AlphaFold structures (default: True)
             max_structures: Maximum number of structures to return (None for all)
+            force_comprehensive: If True, query entire PDB even if in ATOMICA dataset (default: False)
         
         Returns:
             Dictionary with structures and metadata
+            
+        Note:
+            - If found in ATOMICA index: Returns ATOMICA data (scores, residues, PyMOL) instantly
+            - If NOT in ATOMICA or force_comprehensive=True: Makes API calls (slow, NO ATOMICA data)
         """
-        with start_action(action_type="get_structures_for_uniprot", uniprot_id=uniprot_id) as action:
+        with start_action(action_type="get_structures_for_uniprot", uniprot_id=uniprot_id, force_comprehensive=force_comprehensive) as action:
+            # STEP 1: ALWAYS check ATOMICA index first
+            atomica_result = None
+            if self.dataset_available and self.index is not None and not force_comprehensive:
+                action.log(message_type="checking_atomica_index", uniprot_id=uniprot_id)
+                atomica_result = self.search_by_uniprot(uniprot_id)
+                
+                if atomica_result and not atomica_result.get("error") and atomica_result.get("count", 0) > 0:
+                    action.log(
+                        message_type="found_in_atomica_index",
+                        count=atomica_result["count"],
+                        message="UniProt found in ATOMICA dataset. Returning ATOMICA analysis data (fast path)."
+                    )
+                    
+                    # Apply max_structures limit if specified
+                    if max_structures is not None:
+                        atomica_result["structures"] = atomica_result["structures"][:max_structures]
+                        atomica_result["count"] = len(atomica_result["structures"])
+                        atomica_result["limited_to"] = max_structures
+                    
+                    atomica_result["source"] = "atomica_dataset"
+                    atomica_result["has_atomica_analysis"] = True
+                    return atomica_result
+                else:
+                    action.log(message_type="not_in_atomica_index", uniprot_id=uniprot_id)
+            
+            # STEP 2: Not in ATOMICA or force_comprehensive=True, query external PDB APIs (slow)
+            action.log(
+                message_type="querying_external_pdb",
+                reason="not_in_atomica" if not force_comprehensive else "force_comprehensive_requested"
+            )
+            
             try:
                 structures = get_structures_for_uniprot(uniprot_id, include_alphafold=include_alphafold)
                 
@@ -947,7 +1036,9 @@ Query patterns:
                         "uniprot_id": uniprot_id,
                         "structures": [],
                         "count": 0,
-                        "message": "No structures found"
+                        "source": "external_pdb",
+                        "has_atomica_analysis": False,
+                        "message": "No structures found in PDB"
                     }
                 
                 # Limit results if requested
@@ -957,12 +1048,15 @@ Query patterns:
                 # Convert to dictionaries
                 structure_dicts = [s.to_dict() for s in structures]
                 
-                action.log(message_type="structures_retrieved", count=len(structure_dicts))
+                action.log(message_type="structures_retrieved", count=len(structure_dicts), source="external_pdb")
                 
                 return {
                     "uniprot_id": uniprot_id,
                     "structures": structure_dicts,
-                    "count": len(structure_dicts)
+                    "count": len(structure_dicts),
+                    "source": "external_pdb",
+                    "has_atomica_analysis": False,
+                    "note": "These are general PDB structures without ATOMICA analysis data"
                 }
             
             except Exception as e:
@@ -971,7 +1065,9 @@ Query patterns:
                     "error": str(e),
                     "uniprot_id": uniprot_id,
                     "structures": [],
-                    "count": 0
+                    "count": 0,
+                    "source": "external_pdb",
+                    "has_atomica_analysis": False
                 }
     
     def dataset_info(self) -> Dict[str, Any]:

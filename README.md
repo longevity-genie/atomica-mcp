@@ -224,11 +224,11 @@ pip install -e .
 
 ## Running the Server
 
-The server uses stdio transport by default, which is the recommended mode for AI assistants like Claude Desktop.
+The server uses stdio transport by default for AI assistants like Claude Desktop and Cursor.
 
 ```bash
 # Run with uvx (no installation needed)
-uvx atomica-mcp
+uvx atomica-mcp@latest
 
 # Or run locally installed version
 atomica-mcp
@@ -236,74 +236,37 @@ atomica-mcp
 
 ## Configuration
 
-### Environment Variables
+### Environment Variables (Optional)
 
-- `ATOMICA_DATASET_DIR`: Path to the ATOMICA dataset directory (optional, auto-detected if not set)
-- `MCP_TIMEOUT`: Timeout for external API requests in seconds (default: 300)
+- `ATOMICA_DATASET_DIR`: Custom path to dataset (auto-detected if not set)
+- `MCP_TIMEOUT`: Timeout for API requests in seconds (default: 300, recommended: 600)
 
-The dataset directory is auto-detected in this order:
-1. `ATOMICA_DATASET_DIR` environment variable (if set)
-2. `data/input/atomica_longevity_proteins` in current working directory
-3. `data/input/atomica_longevity_proteins` relative to package directory
-4. Default path (will trigger download if dataset not found)
-
-The timeout setting is important when making requests to external APIs like PDBe and UniProt:
-
+**Example:**
 ```bash
-# Use custom dataset directory
-export ATOMICA_DATASET_DIR=/path/to/your/atomica_longevity_proteins
-atomica-mcp
-
-# Increase timeout to 10 minutes
 export MCP_TIMEOUT=600
 atomica-mcp
 ```
 
+For all environment variables, see [Advanced Configuration](#advanced-configuration).
+
 ### MCP Client Configuration
 
-#### For Claude Desktop
+#### Quick Setup for Claude Desktop / Cursor
 
-Add to your Claude Desktop configuration file:
+Add to your MCP configuration file:
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+**Claude Desktop macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Claude Desktop Windows**: `%APPDATA%\Claude\claude_desktop_config.json`  
+**Cursor**: `~/.cursor/mcp.json`
 
-**Using uvx (recommended - no installation needed):**
 ```json
 {
   "mcpServers": {
-    "atomica": {
+    "atomica-mcp": {
       "command": "uvx",
-      "args": ["atomica-mcp"],
-      "env": {}
-    }
-  }
-}
-```
-
-**With custom dataset directory (if already downloaded):**
-```json
-{
-  "mcpServers": {
-    "atomica": {
-      "command": "uvx",
-      "args": ["atomica-mcp"],
+      "args": ["atomica-mcp@latest"],
       "env": {
-        "ATOMICA_DATASET_DIR": "/path/to/your/atomica_longevity_proteins"
-      }
-    }
-  }
-}
-```
-
-**With custom timeout:**
-```json
-{
-  "mcpServers": {
-    "atomica": {
-      "command": "uvx",
-      "args": ["atomica-mcp"],
-      "env": {
+        "MCP_TRANSPORT": "stdio",
         "MCP_TIMEOUT": "600"
       }
     }
@@ -311,49 +274,27 @@ Add to your Claude Desktop configuration file:
 }
 ```
 
-**Using locally installed package:**
-```json
-{
-  "mcpServers": {
-    "atomica": {
-      "command": "atomica-mcp",
-      "args": [],
-      "env": {}
-    }
-  }
-}
-```
+That's it! The dataset will download automatically on first use (~500MB).
 
-#### Combining with Other MCP Servers
-
-You can use ATOMICA alongside other MCP servers:
+**Optional**: If you've already downloaded the dataset locally, you can specify the path:
 ```json
-{
-  "mcpServers": {
-    "atomica": {
-      "command": "uvx",
-      "args": ["atomica-mcp"]
-    },
-    "opengenes": {
-      "command": "uvx",
-      "args": ["opengenes-mcp"]
-    }
-  }
+"env": {
+  "MCP_TRANSPORT": "stdio",
+  "MCP_TIMEOUT": "600",
+  "ATOMICA_DATASET_DIR": "/path/to/your/atomica_longevity_proteins"
 }
 ```
 
 ### Testing Your Configuration
 
-After configuring, restart Claude Desktop and check:
+After adding the config, restart Claude Desktop/Cursor and test:
 
-1. **Server appears in tools**: Claude should show ATOMICA tools available
-2. **Test a simple query**: "List structures in the ATOMICA dataset"
-3. **Check tool execution**: Claude should call `atomica_list_structures()`
+**Try asking**: "List structures in the ATOMICA dataset" or "What structures are available for KEAP1?"
 
-If the server doesn't appear:
-- Check the configuration file path is correct
-- Verify the command works in terminal: `uvx atomica-mcp --help`
-- Look for errors in Claude Desktop logs
+If it doesn't work:
+- Verify the command works in terminal: `uvx atomica-mcp@latest --help`
+- Check logs in Claude Desktop/Cursor for errors
+- Ensure the config JSON is valid
 
 ## Dataset Management CLI
 
@@ -736,6 +677,74 @@ Homo sapiens. UniProt ID: P04637, Gene: TP53..."
 - **[opengenes-mcp](https://github.com/longevity-genie/opengenes-mcp)** - Aging and longevity genetics database queries
 - **[gget-mcp](https://github.com/longevity-genie/gget-mcp)** - Genomics and sequence analysis toolkit
 - **[holy-bio-mcp](https://github.com/longevity-genie/holy-bio-mcp)** - Unified framework for bioinformatics research
+
+## Advanced Configuration
+
+### Multiple MCP Servers
+
+You can use ATOMICA alongside other MCP servers:
+```json
+{
+  "mcpServers": {
+    "atomica-mcp": {
+      "command": "uvx",
+      "args": ["atomica-mcp@latest"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "MCP_TIMEOUT": "600"
+      }
+    },
+    "opengenes-mcp": {
+      "command": "uvx",
+      "args": ["opengenes-mcp@latest"],
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
+```
+
+### Using Local Installation
+
+If you've installed the package locally (not via uvx):
+```json
+{
+  "mcpServers": {
+    "atomica-mcp": {
+      "command": "atomica-mcp",
+      "args": [],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "MCP_TIMEOUT": "600"
+      }
+    }
+  }
+}
+```
+
+### HTTP Server Mode
+
+For running as an HTTP server (not recommended for Cursor/Claude Desktop):
+```bash
+# Start HTTP server
+atomica-mcp --transport streamable-http --port 3002
+
+# Or set via environment
+export MCP_TRANSPORT=streamable-http
+export MCP_PORT=3002
+atomica-mcp
+```
+
+### All Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_TRANSPORT` | `streamable-http` | Transport mode: `stdio` (for Cursor/Claude) or `streamable-http` |
+| `MCP_TIMEOUT` | `300` | Timeout in seconds for external API calls |
+| `MCP_HOST` | `0.0.0.0` | Host for HTTP mode (not used in stdio) |
+| `MCP_PORT` | `3002` | Port for HTTP mode (not used in stdio) |
+| `ATOMICA_DATASET_DIR` | auto-detect | Custom path to dataset directory |
 
 ## License
 
