@@ -11,7 +11,7 @@ SIFTS Data Sources:
 https://ftp.ebi.ac.uk/pub/databases/msd/sifts/flatfiles/tsv/
 """
 
-from pdb_mcp.sifts.utils import (
+from atomica_mcp.preprocessing.sifts.utils import (
     load_pdb_annotations,
     get_uniprot_ids_from_tsv,
     get_organism_from_tsv,
@@ -28,4 +28,6 @@ __all__ = [
     "PDB_TAXONOMY_DATA",
     "UNIPROT_PDB_DATA",
 ]
+
+
 

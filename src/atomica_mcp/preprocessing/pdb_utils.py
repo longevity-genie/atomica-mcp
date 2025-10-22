@@ -28,14 +28,12 @@ from tenacity import (
 from eliot import start_action
 
 # Import SIFTS functionality from sifts subpackage
-from pdb_mcp.sifts import (
+from atomica_mcp.preprocessing.sifts import (
     load_pdb_annotations,
     get_uniprot_ids_from_tsv,
     get_organism_from_tsv,
-    PDB_UNIPROT_DATA,
-    PDB_TAXONOMY_DATA,
-    UNIPROT_PDB_DATA,
 )
+import atomica_mcp.preprocessing.sifts.utils as sifts_utils
 
 
 # Global dictionary to store AnAge data
@@ -144,20 +142,63 @@ def _fetch_pdb_entry_info(pdb_id: str) -> Dict[str, Any]:
         raise
 
 
+def _fetch_pdb_entry_info_with_retries(pdb_id: str, timeout: int = 10, retries: int = 3) -> Dict[str, Any]:
+    """
+    Fetch PDB entry information with configurable retry logic.
+
+    Args:
+        pdb_id: PDB identifier (e.g., '2uxq')
+        timeout: Request timeout in seconds
+        retries: Number of retry attempts
+
+    Returns:
+        Dictionary with entry information
+
+    Raises:
+        Exception: If fetch fails after all retries
+    """
+    import time
+    import requests.exceptions
+
+    for attempt in range(retries + 1):
+        try:
+            # Use biotite to fetch entry info
+            entry_info = rcsb.fetch(pdb_id, format="cif")
+            # biotite returns structure, we need to extract metadata
+            # For better metadata, use JSON format
+            import urllib.request
+            url = f"https://data.rcsb.org/rest/v1/core/entry/{pdb_id}"
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                return json.loads(response.read().decode())
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            if attempt == retries:
+                # Last attempt failed
+                raise e
+            # Wait before retrying (exponential backoff)
+            wait_time = 0.5 * (2 ** attempt)
+            time.sleep(min(wait_time, 10))
+        except Exception as e:
+            # For other exceptions, retry once more but don't wait
+            if attempt == retries:
+                raise e
+            # Brief wait for non-network errors
+            time.sleep(0.1)
+
+
 def fetch_pdb_metadata(pdb_id: str, timeout: int = 10, retries: int = 3, use_tsv: bool = True, pdb_uniprot_data: Optional[pl.DataFrame] = None, pdb_taxonomy_data: Optional[pl.DataFrame] = None) -> Dict[str, Any]:
     """
     Fetch PDB metadata including resolution, title, chains, and organism information.
-    
-    Uses biotite's RCSB API for reliable metadata fetching with built-in retry logic.
-    
+
+    Uses biotite's RCSB API for reliable metadata fetching with retry logic.
+
     Args:
         pdb_id: PDB identifier (e.g., '2uxq')
         timeout: Request timeout in seconds (passed to urllib)
-        retries: Number of retry attempts (handled by tenacity decorator)
+        retries: Number of retry attempts for API calls
         use_tsv: If True, use local TSV files for organism/UniProt data. If False, use RCSB API.
         pdb_uniprot_data: Optional pre-loaded PDB-UniProt mapping. Uses global if not provided.
         pdb_taxonomy_data: Optional pre-loaded PDB taxonomy data. Uses global if not provided.
-    
+
     Returns:
         Dictionary with PDB metadata including:
         - pdb_id: PDB identifier
@@ -173,16 +214,22 @@ def fetch_pdb_metadata(pdb_id: str, timeout: int = 10, retries: int = 3, use_tsv
             # Use local TSV files for organism/UniProt data
             pdb_id_lower = pdb_id.lower()
             
-            uniprot_data = pdb_uniprot_data if pdb_uniprot_data is not None else PDB_UNIPROT_DATA
-            taxonomy_data = pdb_taxonomy_data if pdb_taxonomy_data is not None else PDB_TAXONOMY_DATA
+            uniprot_data = pdb_uniprot_data if pdb_uniprot_data is not None else sifts_utils.PDB_UNIPROT_DATA
+            taxonomy_data = pdb_taxonomy_data if pdb_taxonomy_data is not None else sifts_utils.PDB_TAXONOMY_DATA
             
             if uniprot_data is None:
-                return {"pdb_id": pdb_id, "found": False, "error": "TSV data not loaded"}
+                # TSV data not loaded, fall back to API
+                with start_action(action_type="tsv_fallback_to_api", pdb_id=pdb_id, reason="TSV data not loaded"):
+                    pass
+                return fetch_pdb_metadata(pdb_id, timeout=timeout, retries=retries, use_tsv=False)
             
             # Get all chains for this PDB ID
             pdb_matches = uniprot_data.filter(pl.col("PDB") == pdb_id_lower)
             if len(pdb_matches) == 0:
-                return {"pdb_id": pdb_id, "found": False, "error": "PDB ID not found in TSV"}
+                # PDB not found in SIFTS, fall back to API
+                with start_action(action_type="tsv_fallback_to_api", pdb_id=pdb_id, reason="PDB ID not found in SIFTS"):
+                    pass
+                return fetch_pdb_metadata(pdb_id, timeout=timeout, retries=retries, use_tsv=False)
             
             # Get unique chains
             chains = pdb_matches["CHAIN"].unique().to_list()
@@ -230,8 +277,8 @@ def fetch_pdb_metadata(pdb_id: str, timeout: int = 10, retries: int = 3, use_tsv
                 if not results:
                     return {"pdb_id": pdb_id, "found": False, "error": "PDB ID not found"}
                 
-                # Fetch detailed entry information via REST API with tenacity retries
-                entry_data = _fetch_pdb_entry_info(pdb_id)
+                # Fetch detailed entry information via REST API with configurable retries
+                entry_data = _fetch_pdb_entry_info_with_retries(pdb_id, timeout=timeout, retries=retries)
                 
                 # Extract metadata
                 metadata["title"] = entry_data.get("struct", {}).get("title", "")

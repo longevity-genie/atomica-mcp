@@ -114,7 +114,7 @@ def get_organism_from_tsv(pdb_id: str, chain_id: str, pdb_taxonomy_data: Optiona
     Returns:
         Dictionary with organism information (scientific_name, taxonomy_id)
     """
-    from pdb_mcp.pdb_utils import ANAGE_DATA
+    from atomica_mcp.preprocessing.pdb_utils import ANAGE_DATA
     
     default_result = {
         "scientific_name": "Unknown",

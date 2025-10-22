@@ -1,0 +1,585 @@
+#!/usr/bin/env python3
+"""
+Dataset management commands for atomica-mcp.
+Download and manage atomica_longevity_proteins dataset from Hugging Face.
+"""
+
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+import json
+
+import typer
+from eliot import start_action, to_file
+import fsspec
+import polars as pl
+from pycomfort.logging import to_nice_file
+
+app = typer.Typer(
+    help="Dataset management commands for ATOMICA longevity proteins",
+    no_args_is_help=True
+)
+
+
+def setup_logging(log_file_name: str, log_to_file: bool = True) -> None:
+    """
+    Set up Eliot logging with file destinations.
+    
+    Args:
+        log_file_name: Base name for log files (without extension)
+        log_to_file: Whether to enable file logging
+    """
+    if log_to_file:
+        # Get root directory (3 levels up from this file)
+        root = Path(__file__).parent.parent.parent
+        log_dir = root / "logs"
+        log_dir.mkdir(exist_ok=True)
+        
+        json_log = log_dir / f"{log_file_name}.json"
+        rendered_log = log_dir / f"{log_file_name}.log"
+        
+        # Register Eliot destinations
+        to_file(open(str(json_log), "w"))
+        to_nice_file(json_log, rendered_log)
+
+
+def get_hf_filesystem() -> fsspec.AbstractFileSystem:
+    """
+    Get Hugging Face fsspec filesystem.
+    
+    Returns:
+        Hugging Face filesystem instance
+    """
+    return fsspec.filesystem("hf", token=None)
+
+
+@app.command()
+def download(
+    output_dir: Path = typer.Option(
+        Path("data/input/atomica_longevity_proteins"),
+        "--output-dir", "-o",
+        help="Output directory for downloaded dataset"
+    ),
+    repo_id: str = typer.Option(
+        "longevity-genie/atomica_longevity_proteins",
+        "--repo-id", "-r",
+        help="Hugging Face repository ID"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force", "-f",
+        help="Force re-download even if files exist"
+    ),
+    pattern: Optional[str] = typer.Option(
+        None,
+        "--pattern", "-p",
+        help="Download only files matching pattern (glob, e.g., '*.cif' or '6ht5*')"
+    )
+) -> None:
+    """
+    Download atomica_longevity_proteins dataset from Hugging Face using fsspec.
+    
+    This downloads PDB structures, ATOMICA scores, metadata, and critical residues
+    for longevity-related proteins including NRF2, KEAP1, SOX2, APOE, and OCT4.
+    
+    Examples:
+        # Download full dataset
+        dataset download
+        
+        # Download to data/inputs
+        dataset download --output-dir data/inputs
+        
+        # Download only CIF structure files
+        dataset download --pattern "*.cif"
+        
+        # Download only files for specific PDB (e.g., 6ht5)
+        dataset download --pattern "6ht5*"
+    """
+    # Set up logging
+    setup_logging("download_dataset")
+    
+    with start_action(action_type="download_dataset", repo=repo_id, output=str(output_dir)) as action:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        typer.echo(f"📦 Downloading dataset: {repo_id}")
+        typer.echo(f"📁 Output directory: {output_dir}")
+        
+        try:
+            # Get fsspec filesystem
+            typer.echo("🔌 Connecting to Hugging Face...")
+            fs = get_hf_filesystem()
+            
+            # List files in the dataset using hf:// protocol
+            typer.echo("🔍 Discovering dataset files...")
+            repo_path = f"datasets/{repo_id}"
+            
+            try:
+                files = fs.ls(repo_path, detail=False)
+                # Filter out directories and metadata files
+                files = [f for f in files if not f.endswith('/')]
+                
+                # Apply pattern filter if provided
+                if pattern:
+                    import fnmatch
+                    files = [f for f in files if fnmatch.fnmatch(Path(f).name, pattern)]
+                
+                action.log(message_type="files_listed", count=len(files))
+            
+            except Exception as e:
+                action.log(message_type="list_error", error=str(e))
+                typer.echo(f"❌ Could not list files: {e}", err=True)
+                raise typer.Exit(code=1)
+            
+            if not files:
+                typer.echo("❌ No files found to download", err=True)
+                raise typer.Exit(code=1)
+            
+            if pattern:
+                typer.echo(f"🎯 Pattern '{pattern}' matched {len(files)} files")
+            else:
+                typer.echo(f"📥 Found {len(files)} files to download")
+            
+            downloaded = 0
+            skipped = 0
+            failed = 0
+            
+            for remote_file in files:
+                # Extract filename from path
+                filename = Path(remote_file).name
+                local_path = output_dir / filename
+                
+                # Check if file exists and skip if not forcing
+                if local_path.exists() and not force:
+                    skipped += 1
+                    continue
+                
+                try:
+                    with start_action(action_type="download_file", file=filename) as dl_action:
+                        # Download using fsspec with hf:// protocol
+                        remote_url = f"hf://{remote_file}"
+                        fs.get(remote_url, str(local_path))
+                        
+                        downloaded += 1
+                        
+                        if downloaded % 10 == 0:
+                            typer.echo(f"✓ Downloaded {downloaded}/{len(files)} files...")
+                        
+                        dl_action.log(
+                            message_type="download_complete",
+                            size_bytes=local_path.stat().st_size if local_path.exists() else 0
+                        )
+                
+                except Exception as e:
+                    failed += 1
+                    with start_action(action_type="download_failed", file=filename) as fail_action:
+                        fail_action.log(message_type="error", error=str(e))
+                    typer.echo(f"✗ Failed to download {filename}: {e}", err=True)
+            
+            # Summary
+            typer.echo("\n" + "="*60)
+            typer.echo("📊 Download Summary:")
+            typer.echo(f"  ✓ Downloaded: {downloaded}")
+            typer.echo(f"  ⊘ Skipped (already exist): {skipped}")
+            typer.echo(f"  ✗ Failed: {failed}")
+            typer.echo(f"  📁 Location: {output_dir.resolve()}")
+            typer.echo("="*60)
+            
+            if failed > 0:
+                typer.echo("\n⚠️  Some files failed to download. Check logs for details.", err=True)
+                raise typer.Exit(code=1)
+            
+            if downloaded > 0:
+                typer.echo("\n✅ Dataset download completed successfully!")
+            elif skipped > 0:
+                typer.echo("\n✅ All files already exist. Use --force to re-download.")
+        
+        except typer.Exit:
+            raise
+        except Exception as e:
+            typer.echo(f"\n❌ Error downloading dataset: {e}", err=True)
+            raise typer.Exit(code=1)
+
+
+@app.command()
+def list_files(
+    repo_id: str = typer.Option(
+        "longevity-genie/atomica_longevity_proteins",
+        "--repo-id", "-r",
+        help="Hugging Face repository ID"
+    ),
+    pattern: Optional[str] = typer.Option(
+        None,
+        "--pattern", "-p",
+        help="Filter files by pattern (glob, e.g., '*.cif')"
+    )
+) -> None:
+    """
+    List all files in the dataset repository.
+    """
+    # Set up logging
+    setup_logging("list_files")
+    
+    with start_action(action_type="list_files", repo=repo_id):
+        typer.echo(f"📦 Repository: {repo_id}")
+        typer.echo(f"🔍 Listing files...\n")
+        
+        try:
+            fs = get_hf_filesystem()
+            repo_path = f"datasets/{repo_id}"
+            files = fs.ls(repo_path, detail=False)
+            files = [f for f in files if not f.endswith('/')]
+            
+            # Apply pattern filter if provided
+            if pattern:
+                import fnmatch
+                files = [f for f in files if fnmatch.fnmatch(Path(f).name, pattern)]
+            
+            # Remove repo prefix for display
+            display_files = [Path(f).name for f in files]
+            
+            if pattern:
+                typer.echo(f"🎯 Pattern '{pattern}' matched {len(display_files)} files\n")
+            
+            # Group files by extension
+            from collections import defaultdict
+            by_ext: dict[str, list[str]] = defaultdict(list)
+            for f in display_files:
+                ext = Path(f).suffix or "no_extension"
+                by_ext[ext].append(f)
+            
+            # Display summary
+            typer.echo("📊 File Summary:")
+            for ext, file_list in sorted(by_ext.items()):
+                typer.echo(f"  {ext:20s}: {len(file_list):4d} files")
+            
+            typer.echo(f"\n📄 Total: {len(display_files)} files")
+            
+            # Display first 20 files
+            if display_files:
+                typer.echo("\n📋 First 20 files:")
+                for f in sorted(display_files)[:20]:
+                    typer.echo(f"  • {f}")
+                
+                if len(display_files) > 20:
+                    typer.echo(f"\n  ... and {len(display_files) - 20} more files")
+        
+        except Exception as e:
+            typer.echo(f"\n❌ Error listing files: {e}", err=True)
+            raise typer.Exit(code=1)
+
+
+@app.command()
+def info(
+    repo_id: str = typer.Option(
+        "longevity-genie/atomica_longevity_proteins",
+        "--repo-id", "-r",
+        help="Hugging Face repository ID"
+    )
+) -> None:
+    """
+    Show information about the dataset.
+    """
+    typer.echo(f"📦 Dataset: {repo_id}")
+    typer.echo(f"🔗 URL: https://huggingface.co/datasets/{repo_id}")
+    typer.echo("\n📄 Description:")
+    typer.echo("  Comprehensive structural analysis of key longevity-related proteins")
+    typer.echo("  using the ATOMICA deep learning model.")
+    typer.echo("\n🧬 Protein Families:")
+    typer.echo("  • NRF2 (NFE2L2): 19 structures - Oxidative stress response")
+    typer.echo("  • KEAP1: 47 structures - Oxidative stress response")
+    typer.echo("  • SOX2: 8 structures - Pluripotency factor")
+    typer.echo("  • APOE (E2/E3/E4): 9 structures - Lipid metabolism & Alzheimer's")
+    typer.echo("  • OCT4 (POU5F1): 4 structures - Reprogramming factor")
+    typer.echo("\n📊 Total: 94 high-resolution protein structures")
+    typer.echo("\n📁 Files per structure:")
+    typer.echo("  • {pdb_id}.cif - Structure file (mmCIF format)")
+    typer.echo("  • {pdb_id}_metadata.json - PDB metadata")
+    typer.echo("  • {pdb_id}_interact_scores.json - ATOMICA interaction scores")
+    typer.echo("  • {pdb_id}_summary.json - Processing statistics")
+    typer.echo("  • {pdb_id}_critical_residues.tsv - Ranked critical residues")
+    typer.echo("\n💡 Usage:")
+    typer.echo("  # Download full dataset")
+    typer.echo("  atomica-dataset download")
+    typer.echo("\n  # Download to data/inputs")
+    typer.echo("  atomica-dataset download --output-dir data/inputs")
+    typer.echo("\n  # Download only structure files")
+    typer.echo("  atomica-dataset download --pattern '*.cif'")
+    typer.echo("\n  # List all available files")
+    typer.echo("  atomica-dataset list-files")
+
+
+def resolve_pdb_metadata(pdb_id: str) -> Dict[str, Any]:
+    """
+    Resolve protein metadata for a PDB ID using comprehensive PDB mining.
+    
+    Uses the mining module which queries PDBe API, UniProt API, and includes
+    comprehensive metadata resolution with retry logic and error handling.
+    
+    Args:
+        pdb_id: PDB identifier (e.g., '1b68')
+    
+    Returns:
+        Dictionary with protein metadata including UniProt IDs, organisms, gene symbols,
+        structure information, and complex details
+    """
+    from atomica_mcp.mining.pdb_metadata import get_pdb_metadata
+    
+    with start_action(action_type="resolve_pdb_metadata", pdb_id=pdb_id) as action:
+        # Use comprehensive mining function
+        pdb_metadata = get_pdb_metadata(pdb_id)
+        
+        if pdb_metadata is None:
+            action.log(message_type="pdb_metadata_not_found")
+            return {
+                "pdb_id": pdb_id,
+                "found": False,
+                "error": "PDB ID not found in database",
+                "uniprot_ids": [],
+                "organisms": [],
+                "taxonomy_ids": [],
+                "gene_symbols": [],
+                "title": None,
+                "structures": []
+            }
+        
+        # Extract key information from comprehensive metadata
+        result = {
+            "pdb_id": pdb_id.upper(),
+            "found": True,
+            "title": pdb_metadata.title,
+            "uniprot_ids": pdb_metadata.uniprot_ids,
+            "gene_symbols": pdb_metadata.gene_symbols,
+            "organisms": [pdb_metadata.organism] if pdb_metadata.organism else [],
+            "taxonomy_ids": [pdb_metadata.organism_tax_id] if pdb_metadata.organism_tax_id else [],
+            "structures": [s.to_dict() for s in pdb_metadata.structures]
+        }
+        
+        action.log(
+            message_type="pdb_metadata_resolved",
+            uniprot_count=len(result["uniprot_ids"]),
+            gene_count=len(result["gene_symbols"])
+        )
+        
+        return result
+
+
+@app.command()
+def index(
+    dataset_dir: Path = typer.Option(
+        Path("data/input/atomica_longevity_proteins"),
+        "--dataset-dir", "-d",
+        help="Directory containing the ATOMICA longevity proteins dataset"
+    ),
+    output_file: Path = typer.Option(
+        Path("data/output/atomica_index.parquet"),
+        "--output", "-o",
+        help="Output file for the dataset index (parquet format)"
+    ),
+    include_metadata: bool = typer.Option(
+        False,
+        "--include-metadata",
+        help="Include full metadata dictionary in output (makes file larger)"
+    )
+) -> None:
+    """
+    Create an index of all PDB structures in the ATOMICA dataset with resolved metadata.
+    
+    Generates a comprehensive index DataFrame with:
+    - PDB ID
+    - Paths to all related files (CIF, metadata, summary, critical residues, etc.)
+    - Resolved protein metadata (UniProt IDs, organisms, taxonomy IDs, gene symbols, structures)
+    - Counts and statistics from files
+    
+    The index is saved as a Parquet file for efficient querying and analysis.
+    Boolean flags like "has_metadata" are not included as they can be computed from queries
+    (e.g., pl.col("metadata_path").is_not_null()).
+    
+    Examples:
+        # Create index with default settings
+        dataset index
+        
+        # Create index with custom paths
+        dataset index --dataset-dir data/atomica --output data/index.parquet
+        
+        # Include full metadata in the index
+        dataset index --include-metadata
+    """
+    # Set up logging
+    setup_logging("index_dataset")
+    
+    with start_action(action_type="index_dataset", dataset_dir=str(dataset_dir), output=str(output_file)) as action:
+        if not dataset_dir.exists():
+            typer.echo(f"❌ Dataset directory not found: {dataset_dir}", err=True)
+            raise typer.Exit(code=1)
+        
+        typer.echo(f"📦 Indexing ATOMICA dataset: {dataset_dir}")
+        typer.echo(f"📊 Building comprehensive index with metadata resolution...")
+        
+        # Find all PDB IDs by looking for .cif files
+        cif_files = sorted(dataset_dir.glob("*.cif"))
+        
+        if not cif_files:
+            typer.echo("❌ No CIF files found in dataset directory", err=True)
+            raise typer.Exit(code=1)
+        
+        typer.echo(f"🔍 Found {len(cif_files)} structures")
+        
+        # Build index records
+        records: List[Dict[str, Any]] = []
+        
+        for i, cif_file in enumerate(cif_files, 1):
+            pdb_id = cif_file.stem
+            
+            with start_action(action_type="index_pdb", pdb_id=pdb_id) as pdb_action:
+                # Define expected file paths
+                cif_path = cif_file
+                metadata_path = dataset_dir / f"{pdb_id}_metadata.json"
+                summary_path = dataset_dir / f"{pdb_id}_summary.json"
+                critical_residues_path = dataset_dir / f"{pdb_id}_critical_residues.tsv"
+                interact_scores_path = dataset_dir / f"{pdb_id}_interact_scores.json"
+                pymol_path = dataset_dir / f"{pdb_id}_pymol_commands.pml"
+                
+                # Read metadata JSON if it exists (for quick lookup)
+                metadata_json: Optional[Dict[str, Any]] = None
+                if metadata_path.exists():
+                    with start_action(action_type="read_metadata_json", path=str(metadata_path)) as read_action:
+                        try:
+                            with open(metadata_path, 'r') as f:
+                                metadata_json = json.load(f)
+                            read_action.log(message_type="metadata_json_loaded")
+                        except Exception as e:
+                            read_action.log(message_type="metadata_read_error", error=str(e))
+                
+                # Read summary JSON if it exists
+                summary_json: Optional[Dict[str, Any]] = None
+                if summary_path.exists():
+                    with start_action(action_type="read_summary_json", path=str(summary_path)) as read_action:
+                        try:
+                            with open(summary_path, 'r') as f:
+                                summary_json = json.load(f)
+                            read_action.log(message_type="summary_json_loaded")
+                        except Exception as e:
+                            read_action.log(message_type="summary_read_error", error=str(e))
+                
+                # Count critical residues if file exists
+                critical_residues_count: Optional[int] = None
+                if critical_residues_path.exists():
+                    with start_action(action_type="count_critical_residues", path=str(critical_residues_path)) as count_action:
+                        try:
+                            with open(critical_residues_path, 'r') as f:
+                                # Count non-comment, non-empty lines
+                                critical_residues_count = sum(1 for line in f if line.strip() and not line.startswith('#'))
+                            count_action.log(message_type="residues_counted", count=critical_residues_count)
+                        except Exception as e:
+                            count_action.log(message_type="critical_residues_count_error", error=str(e))
+                
+                # Resolve protein metadata using comprehensive PDB mining
+                typer.echo(f"  [{i}/{len(cif_files)}] Resolving metadata for {pdb_id}...", nl=False)
+                resolved_metadata = resolve_pdb_metadata(pdb_id)
+                
+                if resolved_metadata.get("found"):
+                    uniprot_count = len(resolved_metadata.get('uniprot_ids', []))
+                    gene_count = len(resolved_metadata.get('gene_symbols', []))
+                    typer.echo(f" ✓ ({uniprot_count} UniProt IDs, {gene_count} genes)")
+                else:
+                    error_msg = resolved_metadata.get("error", "Unknown error")
+                    typer.echo(f" ⚠ {error_msg}")
+                
+                # Build record (without boolean flags - can be computed via queries)
+                record = {
+                    "pdb_id": pdb_id.upper(),
+                    # File paths (None if not exist)
+                    "cif_path": str(cif_path),
+                    "metadata_path": str(metadata_path) if metadata_path.exists() else None,
+                    "summary_path": str(summary_path) if summary_path.exists() else None,
+                    "critical_residues_path": str(critical_residues_path) if critical_residues_path.exists() else None,
+                    "interact_scores_path": str(interact_scores_path) if interact_scores_path.exists() else None,
+                    "pymol_path": str(pymol_path) if pymol_path.exists() else None,
+                    # Counts and stats
+                    "critical_residues_count": critical_residues_count,
+                    "total_time_seconds": summary_json.get("total_time_seconds") if summary_json else None,
+                    "gpu_memory_mb_max": summary_json.get("gpu_memory_mb", {}).get("max") if summary_json else None,
+                    # Resolved metadata from PDB mining
+                    "metadata_found": resolved_metadata.get("found", False),
+                    "title": resolved_metadata.get("title"),
+                    "uniprot_ids": resolved_metadata.get("uniprot_ids", []),
+                    "organisms": resolved_metadata.get("organisms", []),
+                    "taxonomy_ids": resolved_metadata.get("taxonomy_ids", []),
+                    "gene_symbols": resolved_metadata.get("gene_symbols", []),
+                    # Convert structures to JSON string to avoid Parquet serialization issues
+                    "structures_json": json.dumps(resolved_metadata.get("structures", [])) if resolved_metadata.get("structures") else None,
+                }
+                
+                # Optionally include full metadata
+                if include_metadata:
+                    record["metadata_json"] = metadata_json
+                    record["summary_json"] = summary_json
+                
+                records.append(record)
+                
+                pdb_action.log(
+                    message_type="pdb_indexed",
+                    metadata_found=resolved_metadata.get("found", False),
+                    uniprot_count=len(resolved_metadata.get("uniprot_ids", [])),
+                    organisms=resolved_metadata.get("organisms", [])
+                )
+        
+        # Create DataFrame
+        typer.echo("\n📊 Creating index DataFrame...")
+        df = pl.DataFrame(records)
+        
+        # Ensure output directory exists
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save to Parquet
+        typer.echo(f"💾 Saving index to: {output_file}")
+        df.write_parquet(output_file)
+        
+        # Print summary statistics
+        typer.echo("\n" + "="*60)
+        typer.echo("📊 Dataset Index Summary:")
+        typer.echo(f"  Total structures: {len(df)}")
+        
+        # Count structures with complete datasets (all file paths not null)
+        complete_count = df.filter(
+            pl.col('metadata_path').is_not_null() & 
+            pl.col('summary_path').is_not_null() & 
+            pl.col('critical_residues_path').is_not_null()
+        ).height
+        typer.echo(f"  Complete datasets (all files): {complete_count}")
+        typer.echo(f"  With metadata resolved: {df.filter(pl.col('metadata_found')).height}")
+        
+        # Count total UniProt IDs and genes
+        total_uniprot = sum(len(ids) for ids in df['uniprot_ids'].to_list())
+        total_genes = sum(len(genes) for genes in df['gene_symbols'].to_list())
+        typer.echo(f"  Total UniProt IDs: {total_uniprot}")
+        typer.echo(f"  Total gene symbols: {total_genes}")
+        
+        # Show organism distribution
+        all_organisms = [org for orgs in df['organisms'].to_list() for org in orgs if org]
+        if all_organisms:
+            from collections import Counter
+            org_counts = Counter(all_organisms)
+            typer.echo(f"  Unique organisms: {len(org_counts)}")
+            typer.echo("\n  Top organisms:")
+            for org, count in org_counts.most_common(5):
+                typer.echo(f"    • {org}: {count} structures")
+        
+        typer.echo(f"\n  📁 Index saved: {output_file.resolve()}")
+        typer.echo("="*60)
+        
+        typer.echo("\n✅ Dataset indexing completed successfully!")
+        typer.echo("\n💡 Tip: Boolean flags like 'has_metadata' can be computed with queries:")
+        typer.echo("   Example: df.filter(pl.col('metadata_path').is_not_null())")
+        
+        action.log(
+            message_type="index_complete",
+            total_structures=len(df),
+            unique_organisms=len(set(org for orgs in df['organisms'].to_list() for org in orgs if org)),
+            total_uniprot_ids=total_uniprot,
+            total_gene_symbols=total_genes
+        )
+
+
+if __name__ == "__main__":
+    app()
+

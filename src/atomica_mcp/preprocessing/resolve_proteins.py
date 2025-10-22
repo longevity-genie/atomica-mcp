@@ -13,7 +13,7 @@ import typer
 from eliot import start_action, Logger
 from pycomfort.logging import to_nice_file, to_nice_stdout
 
-from pdb_mcp.pdb_utils import (
+from atomica_mcp.preprocessing.pdb_utils import (
     load_anage_data,
     load_pdb_annotations,
     fetch_pdb_metadata,

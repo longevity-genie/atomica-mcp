@@ -10,7 +10,7 @@ Tests use actual AnAge data and known PDB IDs to verify:
 """
 import pytest
 from pathlib import Path
-from pdb_mcp import (
+from atomica_mcp import (
     load_anage_data,
     load_pdb_annotations,
     fetch_pdb_metadata,

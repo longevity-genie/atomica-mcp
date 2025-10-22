@@ -6,7 +6,7 @@ in PDB organism names are correctly normalized and matched to AnAge entries.
 """
 import pytest
 from pathlib import Path
-from pdb_mcp.pdb_utils import (
+from atomica_mcp.preprocessing.pdb_utils import (
     load_anage_data,
     normalize_organism_name,
     classify_organism,
