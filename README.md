@@ -82,11 +82,14 @@ atomica_get_structure_files("1b68")
 #### 4. `atomica_search_by_gene(gene_symbol: str)`
 Search ATOMICA dataset for structures by gene symbol.
 
-**Supported genes**: NFE2L2, KEAP1, SOX2, APOE, POU5F1
+**Supported genes**: NFE2L2 (NRF2), KEAP1, SOX2, APOE, POU5F1 (OCT4)
+
+Performs robust case-insensitive matching and supports common gene name aliases (e.g., "NRF2" will find "NFE2L2" structures, "OCT4" will find "POU5F1").
 
 **Example:**
 ```python
 atomica_search_by_gene("KEAP1")
+atomica_search_by_gene("NRF2")  # Finds NFE2L2 structures
 ```
 
 #### 5. `atomica_search_by_organism(organism: str)`
@@ -153,14 +156,8 @@ Schema of the dataset index with query patterns.
 # Install uv first if needed
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Run the server (stdio by default - no subcommand needed)
+# Run the server (stdio transport)
 uvx atomica-mcp
-
-# Or be explicit about transport
-uv tool run atomica-mcp  # stdio by default
-uvx atomica-stdio         # same as above
-uvx atomica-run           # HTTP server
-uvx atomica-sse           # SSE server
 ```
 
 ### Installing from Source
@@ -179,53 +176,39 @@ pip install -e .
 
 ## Running the Server
 
-### Using stdio transport (recommended for AI assistants)
+The server uses stdio transport by default, which is the recommended mode for AI assistants like Claude Desktop.
 
 ```bash
-# Default - runs stdio automatically
+# Run with uvx (no installation needed)
+uvx atomica-mcp
+
+# Or run locally installed version
 atomica-mcp
-
-# Or be explicit
-atomica-stdio
-```
-
-### Using HTTP transport
-
-```bash
-atomica-run --host localhost --port 3002
-```
-
-### Using SSE transport
-
-```bash
-atomica-sse --host localhost --port 3002
-```
-
-### Using the CLI interface (for subcommands)
-
-If you need the full CLI with subcommands:
-
-```bash
-atomica-cli stdio
-atomica-cli run --host localhost --port 3002
-atomica-cli sse --host localhost --port 3002
 ```
 
 ## Configuration
 
 ### Environment Variables
 
-- `MCP_HOST`: Server host (default: 0.0.0.0)
-- `MCP_PORT`: Server port (default: 3002)
-- `MCP_TRANSPORT`: Transport type (default: streamable-http)
+- `ATOMICA_DATASET_DIR`: Path to the ATOMICA dataset directory (optional, auto-detected if not set)
 - `MCP_TIMEOUT`: Timeout for external API requests in seconds (default: 300)
+
+The dataset directory is auto-detected in this order:
+1. `ATOMICA_DATASET_DIR` environment variable (if set)
+2. `data/input/atomica_longevity_proteins` in current working directory
+3. `data/input/atomica_longevity_proteins` relative to package directory
+4. Default path (will trigger download if dataset not found)
 
 The timeout setting is important when making requests to external APIs like PDBe and UniProt:
 
 ```bash
+# Use custom dataset directory
+export ATOMICA_DATASET_DIR=/path/to/your/atomica_longevity_proteins
+atomica-mcp
+
 # Increase timeout to 10 minutes
 export MCP_TIMEOUT=600
-atomica-stdio
+atomica-mcp
 ```
 
 ### MCP Client Configuration
@@ -245,6 +228,21 @@ Add to your Claude Desktop configuration file:
       "command": "uvx",
       "args": ["atomica-mcp"],
       "env": {}
+    }
+  }
+}
+```
+
+**With custom dataset directory (if already downloaded):**
+```json
+{
+  "mcpServers": {
+    "atomica": {
+      "command": "uvx",
+      "args": ["atomica-mcp"],
+      "env": {
+        "ATOMICA_DATASET_DIR": "/path/to/your/atomica_longevity_proteins"
+      }
     }
   }
 }
@@ -278,75 +276,9 @@ Add to your Claude Desktop configuration file:
 }
 ```
 
-**Or use the dedicated stdio entry point:**
-```json
-{
-  "mcpServers": {
-    "atomica": {
-      "command": "atomica-stdio",
-      "args": [],
-      "env": {}
-    }
-  }
-}
-```
+#### Combining with Other MCP Servers
 
-**With full path (if not in PATH):**
-```json
-{
-  "mcpServers": {
-    "atomica": {
-      "command": "/path/to/.venv/bin/atomica-stdio",
-      "args": [],
-      "env": {
-        "MCP_TIMEOUT": "300"
-      }
-    }
-  }
-}
-```
-
-#### For HTTP-based MCP Clients
-
-First, start the HTTP server:
-```bash
-atomica-run --host localhost --port 3002
-```
-
-Then configure your client:
-```json
-{
-  "mcpServers": {
-    "atomica": {
-      "url": "http://localhost:3002/mcp",
-      "transport": "streamable-http"
-    }
-  }
-}
-```
-
-#### For SSE-based MCP Clients
-
-First, start the SSE server:
-```bash
-atomica-sse --host localhost --port 3002
-```
-
-Then configure your client:
-```json
-{
-  "mcpServers": {
-    "atomica": {
-      "url": "http://localhost:3002/sse",
-      "transport": "sse"
-    }
-  }
-}
-```
-
-#### Multiple Servers Configuration
-
-You can combine ATOMICA with other MCP servers:
+You can use ATOMICA alongside other MCP servers:
 ```json
 {
   "mcpServers": {
@@ -357,10 +289,6 @@ You can combine ATOMICA with other MCP servers:
     "opengenes": {
       "command": "uvx",
       "args": ["opengenes-mcp"]
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/files"]
     }
   }
 }

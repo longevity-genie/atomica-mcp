@@ -34,9 +34,25 @@ def get_dataset_directory() -> Path:
     """
     Get the path to the ATOMICA dataset directory.
     
+    Checks in this order:
+    1. ATOMICA_DATASET_DIR environment variable
+    2. Current working directory (data/input/atomica_longevity_proteins)
+    3. Package parent directories
+    4. Default path
+    
     Returns path if it exists, otherwise returns default path
     (caller should handle downloading if needed).
     """
+    # Check environment variable first
+    env_path = os.getenv("ATOMICA_DATASET_DIR")
+    if env_path:
+        dataset_path = Path(env_path)
+        if dataset_path.exists():
+            return dataset_path
+        # If env var is set but doesn't exist, still return it
+        # (might be intentional for initialization)
+        return dataset_path
+    
     # Check in current working directory
     cwd_path = Path.cwd() / "data/input/atomica_longevity_proteins"
     if cwd_path.exists():
@@ -241,7 +257,7 @@ class AtomicaMCP(FastMCP):
         
         self.tool(
             name="atomica_search_by_gene",
-            description="Search ATOMICA dataset for structures by gene symbol (e.g., NFE2L2, KEAP1, SOX2, APOE, POU5F1)"
+            description="Search ATOMICA dataset for structures by gene symbol (e.g., NFE2L2/NRF2, KEAP1, SOX2, APOE, POU5F1/OCT4). Supports common aliases."
         )(self.search_by_gene)
         
         self.tool(
@@ -493,8 +509,11 @@ Query patterns:
         """
         Search for structures by gene symbol.
         
+        Performs robust case-insensitive matching on gene symbols.
+        Supports exact matches and common variations.
+        
         Args:
-            gene_symbol: Gene symbol (e.g., 'NFE2L2', 'KEAP1', 'SOX2')
+            gene_symbol: Gene symbol (e.g., 'NFE2L2', 'KEAP1', 'SOX2', 'NRF2')
         
         Returns:
             Dictionary with matching structures
@@ -516,10 +535,30 @@ Query patterns:
                     "structures": []
                 }
             
-            # Filter by gene symbol (case-insensitive)
-            gene_symbol_upper = gene_symbol.upper()
+            # Normalize search term
+            gene_symbol_upper = gene_symbol.upper().strip()
+            
+            # Common gene symbol aliases for flexibility
+            alias_map = {
+                "NRF2": "NFE2L2",
+                "OCT4": "POU5F1",
+                "OCT-4": "POU5F1",
+            }
+            
+            # Check if alias exists
+            search_terms = [gene_symbol_upper]
+            if gene_symbol_upper in alias_map:
+                search_terms.append(alias_map[gene_symbol_upper])
+            # Also check reverse mapping
+            for alias, canonical in alias_map.items():
+                if gene_symbol_upper == canonical:
+                    search_terms.append(alias)
+            
+            # Filter by gene symbol (case-insensitive, exact match in list)
             results = self.index.filter(
-                pl.col("gene_symbols").list.eval(pl.element().str.to_uppercase()).list.contains(gene_symbol_upper)
+                pl.col("gene_symbols").list.eval(
+                    pl.element().str.to_uppercase().is_in(search_terms)
+                ).list.any()
             )
             
             structures = [
@@ -532,10 +571,11 @@ Query patterns:
                 for row in results.iter_rows(named=True)
             ]
             
-            action.log(message_type="search_complete", count=len(structures))
+            action.log(message_type="search_complete", count=len(structures), search_terms=search_terms)
             
             return {
                 "gene_symbol": gene_symbol,
+                "search_terms": search_terms if len(search_terms) > 1 else None,
                 "structures": structures,
                 "count": len(structures)
             }
