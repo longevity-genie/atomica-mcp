@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""ATOMICA MCP Server - Protein structure and ATOMICA analysis interface."""
+"""ATOMICA MCP Server - Protein structure and ATOMICA analysis interface.
+
+ATOMICA is a geometric deep learning model that learns atomic-scale representations
+of intermolecular interactions across proteins, small molecules, ions, lipids, and nucleic acids.
+Trained on 2M+ interaction complexes, it generates embeddings that capture physicochemical
+features shared across molecular classes.
+
+This server provides access to ATOMICA longevity protein structures with:
+- Interaction scores: ATOMICA embeddings quantify interface similarity and predict binding partners
+- Critical residues: Ranked residues that influence interactions (low scores = high impact)
+- PyMOL commands: Visualization scripts to highlight interaction-critical regions
+"""
 
 import asyncio
 import os
@@ -236,50 +247,93 @@ class AtomicaMCP(FastMCP):
         self._register_atomica_tools()
         self._register_atomica_resources()
     
+    def _resolve_path(self, relative_path: Optional[str]) -> Optional[str]:
+        """
+        Resolve relative path from index to absolute path and verify existence.
+        
+        Args:
+            relative_path: Relative path from index (e.g., '1u6d/1u6d.cif')
+        
+        Returns:
+            Absolute path as string if file exists, None otherwise
+        """
+        if not relative_path:
+            return None
+        
+        # Paths in index are relative to dataset_dir
+        abs_path = self.dataset_dir / relative_path
+        
+        # Verify file exists
+        if abs_path.exists():
+            return str(abs_path.absolute())
+        else:
+            return None
+    
+    def _resolve_paths_in_dict(self, data: Dict[str, Any], path_keys: List[str]) -> Dict[str, Any]:
+        """
+        Resolve relative paths in dictionary to absolute paths.
+        
+        Args:
+            data: Dictionary containing path values
+            path_keys: List of keys that contain paths to resolve
+        
+        Returns:
+            Dictionary with resolved paths
+        """
+        for key in path_keys:
+            if key in data and data[key]:
+                data[key] = self._resolve_path(data[key])
+        return data
+    
     def _register_atomica_tools(self):
         """Register ATOMICA-specific tools."""
         
         # Dataset query tools
         self.tool(
             name="atomica_list_structures",
-            description="List all PDB structures available in the ATOMICA longevity proteins dataset"
+            description="List all PDB structures in the ATOMICA longevity proteins dataset (NRF2/NFE2L2, KEAP1, SOX2, APOE, OCT4/POU5F1)"
         )(self.list_structures)
         
         self.tool(
             name="atomica_get_structure",
-            description="Get detailed information about a specific PDB structure from the ATOMICA dataset"
+            description="Get info about PDB structure including file paths for interaction scores, critical residues TSV, and PyMOL visualization commands. Example: atomica_get_structure('4iqk')"
         )(self.get_structure)
         
         self.tool(
             name="atomica_get_structure_files",
-            description="Get file paths for a PDB structure (CIF, metadata, critical residues, etc.)"
+            description="Get file paths and check availability for PDB structure files (CIF structure, metadata, critical residues TSV, interaction scores JSON, PyMOL commands PML)"
         )(self.get_structure_files)
         
         self.tool(
             name="atomica_search_by_gene",
-            description="Search ATOMICA dataset for structures by gene symbol (e.g., NFE2L2/NRF2, KEAP1, SOX2, APOE, POU5F1/OCT4). Supports common aliases."
+            description="Search by gene symbol. Supports taxonomy ID or Latin name (e.g., '9606'/'Homo sapiens', 'Mus musculus'). Example: atomica_search_by_gene('KEAP1', 'Homo sapiens')"
         )(self.search_by_gene)
         
         self.tool(
+            name="atomica_search_by_uniprot",
+            description="Search for structures by UniProt ID(s). Direct lookup in index, fast. Example: atomica_search_by_uniprot('Q14145')"
+        )(self.search_by_uniprot)
+        
+        self.tool(
             name="atomica_search_by_organism",
-            description="Search ATOMICA dataset for structures by organism"
+            description="Search by organism (best-effort, data often incomplete). Prefer search_by_gene with species for reliable results. Example: atomica_search_by_organism('Homo sapiens')"
         )(self.search_by_organism)
         
         # Auxiliary PDB tools
         self.tool(
             name="atomica_resolve_pdb",
-            description="Resolve metadata for any PDB ID (not just in ATOMICA dataset) including UniProt IDs, gene symbols, organisms"
+            description="Resolve metadata for any PDB ID: UniProt IDs, gene symbols, organisms. Works beyond ATOMICA dataset. Example: atomica_resolve_pdb('1tup')"
         )(self.resolve_pdb)
         
         self.tool(
             name="atomica_get_structures_for_uniprot",
-            description="Get all PDB structures available for a given UniProt ID"
+            description="Get all PDB structures for a UniProt ID with resolution, method, dates. Includes AlphaFold if available. Example: atomica_get_structures_for_uniprot('P04637')"
         )(self.get_structures_for_uniprot)
         
         # Dataset management tools
         self.tool(
             name="atomica_dataset_info",
-            description="Get information about the ATOMICA dataset (status, statistics, available proteins)"
+            description="Get ATOMICA dataset statistics: structure counts, unique genes, organisms, repository info"
         )(self.dataset_info)
     
     def _register_atomica_resources(self):
@@ -359,14 +413,23 @@ Query patterns:
     
     def list_structures(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
         """
-        List all PDB structures in the ATOMICA dataset.
+        List PDB structures in ATOMICA dataset with pagination.
         
         Args:
-            limit: Maximum number of structures to return
-            offset: Number of structures to skip
+            limit: Max structures to return
+            offset: Structures to skip
         
         Returns:
-            Dictionary with structure list and metadata
+            List of structures with availability flags
+            
+        Example:
+            >>> list_structures(limit=10, offset=0)
+            {
+                "structures": [{"pdb_id": "1B68", "has_metadata": true, ...}],
+                "total": 94,
+                "limit": 10,
+                "offset": 0
+            }
         """
         with start_action(action_type="list_structures", limit=limit, offset=offset) as action:
             if not self.dataset_available or self.index is None:
@@ -404,10 +467,23 @@ Query patterns:
         Get detailed information about a specific PDB structure.
         
         Args:
-            pdb_id: PDB identifier (e.g., '1b68')
+            pdb_id: PDB identifier (case-insensitive, e.g., '1u6d', '4iqk')
         
         Returns:
-            Dictionary with structure information
+            Dictionary with structure info and ATOMICA file paths
+            
+        Example:
+            >>> get_structure('1u6d')
+            {
+                "pdb_id": "1U6D",
+                "title": "Crystal structure of the Kelch domain of human Keap1",
+                "uniprot_ids": ["Q14145"],
+                "gene_symbols": ["KEAP1"],
+                "interact_scores_path": "1u6d/1u6d_interact_scores.json",
+                "critical_residues_path": "1u6d/1u6d_critical_residues.tsv",
+                "pymol_path": "1u6d/1u6d_pymol_commands.pml",
+                "critical_residues_count": 156
+            }
         """
         with start_action(action_type="get_structure", pdb_id=pdb_id) as action:
             if not self.dataset_available or self.index is None:
@@ -432,15 +508,17 @@ Query patterns:
             # Get row data
             row = result.row(0, named=True)
             
+            # Build structure info with absolute paths
+            path_keys = ["cif_path", "metadata_path", "summary_path", 
+                        "critical_residues_path", "interact_scores_path", "pymol_path"]
+            
             structure_info = {
                 "pdb_id": row["pdb_id"],
-                "cif_path": row.get("cif_path"),
-                "metadata_path": row.get("metadata_path"),
-                "summary_path": row.get("summary_path"),
-                "critical_residues_path": row.get("critical_residues_path"),
-                "interact_scores_path": row.get("interact_scores_path"),
-                "pymol_path": row.get("pymol_path"),
             }
+            
+            # Resolve paths to absolute
+            for key in path_keys:
+                structure_info[key] = self._resolve_path(row.get(key))
             
             # Add extended metadata if available
             if "title" in row:
@@ -479,23 +557,24 @@ Query patterns:
             pdb_id_lower = pdb_id.lower()
             pdb_id_upper = pdb_id.upper()
             
-            # Build file paths
-            files = {
-                "pdb_id": pdb_id_upper,
-                "cif": str(self.dataset_dir / f"{pdb_id_lower}.cif"),
-                "metadata": str(self.dataset_dir / f"{pdb_id_lower}_metadata.json"),
-                "summary": str(self.dataset_dir / f"{pdb_id_lower}_summary.json"),
-                "critical_residues": str(self.dataset_dir / f"{pdb_id_lower}_critical_residues.tsv"),
-                "interact_scores": str(self.dataset_dir / f"{pdb_id_lower}_interact_scores.json"),
-                "pymol": str(self.dataset_dir / f"{pdb_id_lower}_pymol_commands.pml"),
+            # Build file paths relative to dataset_dir
+            rel_paths = {
+                "cif": f"{pdb_id_lower}/{pdb_id_lower}.cif",
+                "metadata": f"{pdb_id_lower}/{pdb_id_lower}_metadata.json",
+                "summary": f"{pdb_id_lower}/{pdb_id_lower}_summary.json",
+                "critical_residues": f"{pdb_id_lower}/{pdb_id_lower}_critical_residues.tsv",
+                "interact_scores": f"{pdb_id_lower}/{pdb_id_lower}_interact_scores.json",
+                "pymol": f"{pdb_id_lower}/{pdb_id_lower}_pymol_commands.pml",
             }
             
-            # Check which files exist
-            availability = {
-                name: Path(path).exists()
-                for name, path in files.items()
-                if name != "pdb_id"
-            }
+            # Resolve to absolute paths and check existence
+            files = {}
+            availability = {}
+            
+            for name, rel_path in rel_paths.items():
+                abs_path = self._resolve_path(rel_path)
+                files[name] = abs_path
+                availability[name] = abs_path is not None
             
             action.log(message_type="files_checked", available=sum(availability.values()))
             
@@ -505,20 +584,48 @@ Query patterns:
                 "availability": availability
             }
     
-    def search_by_gene(self, gene_symbol: str) -> Dict[str, Any]:
+    def search_by_gene(self, gene_symbol: str, species: str = "9606") -> Dict[str, Any]:
         """
-        Search for structures by gene symbol.
+        Search for structures by gene symbol via UniProt ID resolution.
         
-        Performs robust case-insensitive matching on gene symbols.
-        Supports exact matches and common variations.
+        Strategy:
+        1. First try direct gene symbol match in index (fast)
+        2. If no results, resolve gene→UniProt via API, then search by UniProt (robust)
         
         Args:
-            gene_symbol: Gene symbol (e.g., 'NFE2L2', 'KEAP1', 'SOX2', 'NRF2')
+            gene_symbol: Gene symbol (e.g., 'KEAP1', 'APOE', 'NRF2')
+            species: Species as taxonomy ID or Latin name (default: '9606' for human)
+                     Examples: "9606", "Homo sapiens", "10090", "Mus musculus"
         
         Returns:
-            Dictionary with matching structures
+            Dictionary with matching structures including ATOMICA data paths
+            
+        Example:
+            >>> search_by_gene('KEAP1')  # Human by default
+            >>> search_by_gene('KEAP1', '9606')  # Human by taxonomy ID
+            >>> search_by_gene('KEAP1', 'Homo sapiens')  # Human by Latin name
+            >>> search_by_gene('Trp53', 'Mus musculus')  # Mouse p53
+            
+            Returns:
+            {
+                "gene_symbol": "KEAP1",
+                "species": "9606",
+                "resolution_method": "direct_gene_match",
+                "structures": [
+                    {
+                        "pdb_id": "1U6D",
+                        "uniprot_ids": ["Q14145"],
+                        "gene_symbols": ["KEAP1"],
+                        "interact_scores_path": "/abs/path/to/1u6d_interact_scores.json",
+                        "critical_residues_path": "/abs/path/to/1u6d_critical_residues.tsv",
+                        "pymol_path": "/abs/path/to/1u6d_pymol_commands.pml"
+                    },
+                    ...
+                ],
+                "count": 56
+            }
         """
-        with start_action(action_type="search_by_gene", gene_symbol=gene_symbol) as action:
+        with start_action(action_type="search_by_gene", gene_symbol=gene_symbol, species=species) as action:
             if not self.dataset_available or self.index is None:
                 return {
                     "error": "ATOMICA dataset not available",
@@ -526,38 +633,71 @@ Query patterns:
                     "structures": []
                 }
             
-            # Check if index has gene_symbols column
-            if "gene_symbols" not in self.index.columns:
-                action.log(message_type="gene_column_missing")
+            # Check if index has necessary columns
+            if "uniprot_ids" not in self.index.columns:
+                action.log(message_type="uniprot_column_missing")
                 return {
-                    "error": "Index does not have gene symbol information. Run 'dataset index --include-metadata' to rebuild.",
+                    "error": "Index does not have UniProt ID information. Run 'dataset index --include-metadata' to rebuild.",
                     "gene_symbol": gene_symbol,
                     "structures": []
                 }
             
-            # Normalize search term
-            gene_symbol_upper = gene_symbol.upper().strip()
+            # Strategy 1: Try direct gene symbol match in index (fast path)
+            if "gene_symbols" in self.index.columns:
+                gene_symbol_upper = gene_symbol.upper().strip()
+                results = self.index.filter(
+                    pl.col("gene_symbols").list.eval(
+                        pl.element().str.to_uppercase() == gene_symbol_upper
+                    ).list.any()
+                )
+                
+                if len(results) > 0:
+                    action.log(message_type="found_by_gene_symbol", count=len(results))
+                    structures = [
+                        {
+                            "pdb_id": row["pdb_id"],
+                            "title": row.get("title"),
+                            "uniprot_ids": row.get("uniprot_ids", []),
+                            "gene_symbols": row.get("gene_symbols", []),
+                            "interact_scores_path": self._resolve_path(row.get("interact_scores_path")),
+                            "critical_residues_path": self._resolve_path(row.get("critical_residues_path")),
+                            "pymol_path": self._resolve_path(row.get("pymol_path")),
+                        }
+                        for row in results.iter_rows(named=True)
+                    ]
+                    
+                    return {
+                        "gene_symbol": gene_symbol,
+                        "species": species,
+                        "resolution_method": "direct_gene_match",
+                        "structures": structures,
+                        "count": len(structures)
+                    }
             
-            # Common gene symbol aliases for flexibility
-            alias_map = {
-                "NRF2": "NFE2L2",
-                "OCT4": "POU5F1",
-                "OCT-4": "POU5F1",
-            }
+            # Strategy 2: No direct match - resolve gene→UniProt via API, then search by UniProt
+            action.log(message_type="fallback_to_uniprot_api")
+            from atomica_mcp.mining.pdb_metadata import resolve_gene_to_uniprot
             
-            # Check if alias exists
-            search_terms = [gene_symbol_upper]
-            if gene_symbol_upper in alias_map:
-                search_terms.append(alias_map[gene_symbol_upper])
-            # Also check reverse mapping
-            for alias, canonical in alias_map.items():
-                if gene_symbol_upper == canonical:
-                    search_terms.append(alias)
+            uniprot_ids = resolve_gene_to_uniprot(gene_symbol, species=species)
             
-            # Filter by gene symbol (case-insensitive, exact match in list)
+            if not uniprot_ids:
+                action.log(message_type="no_uniprot_found", gene_symbol=gene_symbol)
+                return {
+                    "gene_symbol": gene_symbol,
+                    "species": species,
+                    "resolution_method": "uniprot_api",
+                    "resolved_uniprot_ids": [],
+                    "structures": [],
+                    "count": 0,
+                    "message": f"No UniProt IDs found for gene symbol '{gene_symbol}' in species {species}"
+                }
+            
+            action.log(message_type="uniprot_resolved", uniprot_ids=uniprot_ids)
+            
+            # Search by resolved UniProt IDs in index
             results = self.index.filter(
-                pl.col("gene_symbols").list.eval(
-                    pl.element().str.to_uppercase().is_in(search_terms)
+                pl.col("uniprot_ids").list.eval(
+                    pl.element().is_in(uniprot_ids)
                 ).list.any()
             )
             
@@ -567,28 +707,108 @@ Query patterns:
                     "title": row.get("title"),
                     "uniprot_ids": row.get("uniprot_ids", []),
                     "gene_symbols": row.get("gene_symbols", []),
+                    "interact_scores_path": self._resolve_path(row.get("interact_scores_path")),
+                    "critical_residues_path": self._resolve_path(row.get("critical_residues_path")),
+                    "pymol_path": self._resolve_path(row.get("pymol_path")),
                 }
                 for row in results.iter_rows(named=True)
             ]
             
-            action.log(message_type="search_complete", count=len(structures), search_terms=search_terms)
+            action.log(message_type="search_complete", count=len(structures))
             
             return {
                 "gene_symbol": gene_symbol,
-                "search_terms": search_terms if len(search_terms) > 1 else None,
+                "species": species,
+                "resolution_method": "uniprot_api",
+                "resolved_uniprot_ids": uniprot_ids,
+                "structures": structures,
+                "count": len(structures)
+            }
+    
+    def search_by_uniprot(self, uniprot_id: str) -> Dict[str, Any]:
+        """
+        Search for structures by UniProt ID. Direct index lookup.
+        
+        Args:
+            uniprot_id: UniProt accession (e.g., 'Q14145', 'P04637')
+        
+        Returns:
+            Dictionary with matching structures including ATOMICA data paths
+            
+        Example:
+            >>> search_by_uniprot('Q14145')  # KEAP1
+            {
+                "uniprot_id": "Q14145",
+                "structures": [
+                    {
+                        "pdb_id": "1U6D",
+                        "uniprot_ids": ["Q14145"],
+                        "gene_symbols": ["KEAP1"],
+                        "interact_scores_path": "...",
+                        "critical_residues_path": "...",
+                        "pymol_path": "..."
+                    }
+                ],
+                "count": 47
+            }
+        """
+        with start_action(action_type="search_by_uniprot", uniprot_id=uniprot_id) as action:
+            if not self.dataset_available or self.index is None:
+                return {
+                    "error": "ATOMICA dataset not available",
+                    "uniprot_id": uniprot_id,
+                    "structures": []
+                }
+            
+            # Check if index has uniprot_ids column
+            if "uniprot_ids" not in self.index.columns:
+                action.log(message_type="uniprot_column_missing")
+                return {
+                    "error": "Index does not have UniProt ID information. Run 'dataset index --include-metadata' to rebuild.",
+                    "uniprot_id": uniprot_id,
+                    "structures": []
+                }
+            
+            # Filter by UniProt ID (uniprot_ids is list[str])
+            results = self.index.filter(
+                pl.col("uniprot_ids").list.contains(uniprot_id)
+            )
+            
+            structures = [
+                {
+                    "pdb_id": row["pdb_id"],
+                    "title": row.get("title"),
+                    "uniprot_ids": row.get("uniprot_ids", []),
+                    "gene_symbols": row.get("gene_symbols", []),
+                    "interact_scores_path": self._resolve_path(row.get("interact_scores_path")),
+                    "critical_residues_path": self._resolve_path(row.get("critical_residues_path")),
+                    "pymol_path": self._resolve_path(row.get("pymol_path")),
+                }
+                for row in results.iter_rows(named=True)
+            ]
+            
+            action.log(message_type="search_complete", count=len(structures))
+            
+            return {
+                "uniprot_id": uniprot_id,
                 "structures": structures,
                 "count": len(structures)
             }
     
     def search_by_organism(self, organism: str) -> Dict[str, Any]:
         """
-        Search for structures by organism.
+        Search for structures by organism name (best-effort).
+        
+        Note: Organism data in index is often incomplete. This search:
+        - Tries substring match on organism names in index
+        - Returns results even if organism field is empty for some structures
+        - Consider using search_by_gene with species parameter for more reliable results
         
         Args:
-            organism: Organism name (e.g., 'Homo sapiens', 'human')
+            organism: Organism name or substring (e.g., 'Homo sapiens', 'human', 'sapiens')
         
         Returns:
-            Dictionary with matching structures
+            Dictionary with matching structures and warning if data is sparse
         """
         with start_action(action_type="search_by_organism", organism=organism) as action:
             if not self.dataset_available or self.index is None:
@@ -602,33 +822,92 @@ Query patterns:
             if "organisms" not in self.index.columns:
                 action.log(message_type="organism_column_missing")
                 return {
-                    "error": "Index does not have organism information. Run 'dataset index --include-metadata' to rebuild.",
+                    "warning": "Index does not have organism information. Use search_by_gene with species parameter instead.",
                     "organism": organism,
-                    "structures": []
+                    "structures": [],
+                    "suggestion": "Try: atomica_search_by_gene('KEAP1', 'Homo sapiens')"
+                }
+            
+            # Count how many structures have organism data
+            with_organisms = self.index.filter(pl.col("organisms").list.len() > 0).height
+            total = len(self.index)
+            
+            # If no structures have organism data, return early with warning
+            if with_organisms == 0:
+                action.log(message_type="no_organism_data")
+                return {
+                    "organism": organism,
+                    "structures": [],
+                    "count": 0,
+                    "index_coverage": {
+                        "structures_with_organism_data": 0,
+                        "total_structures": total,
+                        "percentage": 0.0
+                    },
+                    "warning": (
+                        "No organism data found in index. "
+                        "Use search_by_gene with species parameter instead."
+                    ),
+                    "suggestion": "Try: atomica_search_by_gene('KEAP1', 'Homo sapiens')"
                 }
             
             # Filter by organism (case-insensitive substring match)
+            # Check for null values and empty lists
             organism_lower = organism.lower()
-            results = self.index.filter(
-                pl.col("organisms").list.eval(pl.element().str.to_lowercase()).list.eval(pl.element().str.contains(organism_lower)).list.any()
-            )
+            try:
+                results = self.index.filter(
+                    pl.col("organisms").list.eval(
+                        pl.element().is_not_null() & 
+                        pl.element().str.to_lowercase().str.contains(organism_lower)
+                    ).list.any()
+                )
+            except Exception as e:
+                # Fallback: organisms column might have null values
+                action.log(message_type="organism_search_error", error=str(e))
+                return {
+                    "organism": organism,
+                    "structures": [],
+                    "count": 0,
+                    "warning": (
+                        f"Organism search failed due to data format issues. "
+                        f"Use search_by_gene with species parameter instead."
+                    ),
+                    "suggestion": "Try: atomica_search_by_gene('KEAP1', 'Homo sapiens')"
+                }
             
             structures = [
                 {
                     "pdb_id": row["pdb_id"],
                     "title": row.get("title"),
                     "organisms": row.get("organisms", []),
+                    "gene_symbols": row.get("gene_symbols", []),
+                    "uniprot_ids": row.get("uniprot_ids", []),
                 }
                 for row in results.iter_rows(named=True)
             ]
             
-            action.log(message_type="search_complete", count=len(structures))
+            action.log(message_type="search_complete", count=len(structures), 
+                      with_organisms=with_organisms, total=total)
             
-            return {
+            result = {
                 "organism": organism,
                 "structures": structures,
-                "count": len(structures)
+                "count": len(structures),
+                "index_coverage": {
+                    "structures_with_organism_data": with_organisms,
+                    "total_structures": total,
+                    "percentage": round(100 * with_organisms / total, 1) if total > 0 else 0
+                }
             }
+            
+            # Add warning if organism data is sparse
+            if with_organisms < total * 0.5:
+                result["warning"] = (
+                    f"Organism data is sparse in index ({with_organisms}/{total} structures have organism info). "
+                    "Consider using search_by_gene with species parameter for more reliable results."
+                )
+            
+            return result
     
     def resolve_pdb(self, pdb_id: str) -> Dict[str, Any]:
         """

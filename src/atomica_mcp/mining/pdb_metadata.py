@@ -249,6 +249,84 @@ def get_pdb_structures_from_uniprot(uniprot_id: str) -> List[str]:
         return pdb_ids
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+)
+def resolve_gene_to_uniprot(gene_symbol: str, species: str = "9606") -> List[str]:
+    """
+    Resolve gene symbol to UniProt ID(s) using UniProt API.
+    
+    Args:
+        gene_symbol: Gene symbol (e.g., 'TP53', 'KEAP1', 'NRF2')
+        species: Species as taxonomy ID or Latin name
+                 Examples: "9606", "Homo sapiens", "10090", "Mus musculus"
+                 Default: "9606" (human)
+    
+    Returns:
+        List of UniProt IDs matching the gene symbol
+        
+    Example:
+        >>> resolve_gene_to_uniprot('TP53', '9606')
+        ['P04637']
+        >>> resolve_gene_to_uniprot('TP53', 'Homo sapiens')
+        ['P04637']
+        >>> resolve_gene_to_uniprot('Trp53', 'Mus musculus')
+        ['P02340']
+    """
+    with start_action(action_type="resolve_gene_to_uniprot", gene_symbol=gene_symbol, species=species) as action:
+        # Determine if species is taxonomy ID or Latin name
+        species_query = f"organism_id:{species}" if species.isdigit() else f"organism_name:{species}"
+        
+        # UniProt API query for gene name in specific organism
+        url = "https://rest.uniprot.org/uniprotkb/search"
+        params = {
+            "query": f"(gene:{gene_symbol}) AND ({species_query}) AND (reviewed:true)",
+            "format": "json",
+            "fields": "accession,gene_primary",
+            "size": 10  # Get up to 10 results
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            uniprot_ids = []
+            if "results" in data and len(data["results"]) > 0:
+                for result in data["results"]:
+                    uniprot_id = result.get("primaryAccession")
+                    if uniprot_id:
+                        uniprot_ids.append(uniprot_id)
+            
+            action.log(message_type="gene_resolved", uniprot_count=len(uniprot_ids), species_query=species_query)
+            return uniprot_ids
+            
+        except requests.exceptions.RequestException as e:
+            action.log(message_type="uniprot_api_error", error=str(e))
+            # Try fallback with unreviewed entries
+            try:
+                params["query"] = f"(gene:{gene_symbol}) AND ({species_query})"
+                response = requests.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                
+                uniprot_ids = []
+                if "results" in data and len(data["results"]) > 0:
+                    for result in data["results"][:3]:  # Limit to 3 unreviewed
+                        uniprot_id = result.get("primaryAccession")
+                        if uniprot_id:
+                            uniprot_ids.append(uniprot_id)
+                
+                action.log(message_type="gene_resolved_fallback", uniprot_count=len(uniprot_ids))
+                return uniprot_ids
+            except:
+                action.log(message_type="uniprot_fallback_failed")
+                return []
+
+
 def get_alphafold_structure(uniprot_id: str) -> Optional[StructureInfo]:
     """
     Get AlphaFold structure information for a UniProt ID.

@@ -5,6 +5,19 @@
 
 MCP (Model Context Protocol) server for ATOMICA longevity proteins dataset and PDB structure analysis.
 
+## What is ATOMICA?
+
+**ATOMICA** is a geometric deep learning model that learns atomic-scale representations of intermolecular interactions across proteins, small molecules, ions, lipids, and nucleic acids. Trained on 2M+ interaction complexes, it generates embeddings that capture physicochemical features shared across molecular classes.
+
+### Why ATOMICA Embeddings Are Useful
+
+- **Interaction Scoring**: ATOMICA embeddings quantify interface similarity and predict binding partners based on learned physicochemical patterns
+- **Critical Residues**: Identifies residues that most influence interactions (low ATOMICA scores = high impact on binding)
+- **Cross-Modal Transfer**: Knowledge learned from protein-protein interactions helps predict protein-ligand binding
+- **Visualization**: PyMOL commands highlight interaction-critical regions for structural analysis
+
+### This MCP Server Provides
+
 This server provides access to the ATOMICA longevity proteins dataset from Hugging Face, which contains comprehensive structural analysis of key aging-related proteins using the ATOMICA deep learning model. The server also provides auxiliary functions for resolving arbitrary PDB structures and UniProt IDs.
 
 ## Features
@@ -23,11 +36,13 @@ This server provides access to the ATOMICA longevity proteins dataset from Huggi
 The dataset contains structural analysis of key longevity-related proteins:
 
 ### Protein Families
-- **NRF2 (NFE2L2)**: 19 structures - Oxidative stress response
-- **KEAP1**: 47 structures - Oxidative stress response  
-- **SOX2**: 8 structures - Pluripotency factor
+- **NRF2 (NFE2L2)**: ~12 structures - Oxidative stress response
+- **KEAP1**: 56 structures - Oxidative stress response  
+- **SOX2**: ~8 structures - Pluripotency factor
 - **APOE (E2/E3/E4)**: 9 structures - Lipid metabolism & Alzheimer's
-- **OCT4 (POU5F1)**: 4 structures - Reprogramming factor
+- **OCT4 (POU5F1)**: ~4 structures - Reprogramming factor
+
+**Total**: 83 high-resolution protein structures with ATOMICA analysis
 
 ### Files per Structure
 - `{pdb_id}.cif` - Structure file (mmCIF format)
@@ -79,26 +94,59 @@ Get file paths and availability for a PDB structure.
 atomica_get_structure_files("1b68")
 ```
 
-#### 4. `atomica_search_by_gene(gene_symbol: str)`
+#### 4. `atomica_search_by_gene(gene_symbol: str, species: str = "9606")`
 Search ATOMICA dataset for structures by gene symbol.
 
-**Supported genes**: NFE2L2 (NRF2), KEAP1, SOX2, APOE, POU5F1 (OCT4)
+**Two-stage search strategy:**
+1. **Fast path**: Direct gene symbol match in index (if gene symbols are populated)
+2. **Robust path**: If no match, resolves gene→UniProt via API, then searches by UniProt ID
 
-Performs robust case-insensitive matching and supports common gene name aliases (e.g., "NRF2" will find "NFE2L2" structures, "OCT4" will find "POU5F1").
+**Species parameter**: Supports both taxonomy IDs and Latin names
+- Taxonomy ID: `"9606"`, `"10090"`, etc.
+- Latin name: `"Homo sapiens"`, `"Mus musculus"`, etc.
+- Default: `"9606"` (human)
+
+This approach handles gene aliases automatically (e.g., "NRF2" resolves to "NFE2L2") and works for any gene, not just those in the dataset index.
 
 **Example:**
 ```python
-atomica_search_by_gene("KEAP1")
-atomica_search_by_gene("NRF2")  # Finds NFE2L2 structures
+atomica_search_by_gene("KEAP1")  # Human by default
+atomica_search_by_gene("KEAP1", "Homo sapiens")  # Human by Latin name
+atomica_search_by_gene("NRF2", "9606")  # Resolves to NFE2L2
+atomica_search_by_gene("Trp53", "Mus musculus")  # Mouse p53
 ```
 
-#### 5. `atomica_search_by_organism(organism: str)`
-Search ATOMICA dataset for structures by organism.
+#### 5. `atomica_search_by_uniprot(uniprot_id: str)`
+Search ATOMICA dataset for structures by UniProt ID. Direct index lookup - fastest method.
+
+**Returns structures with ATOMICA analysis files:**
+- Interaction scores JSON
+- Critical residues TSV
+- PyMOL visualization commands
+
+**Example:**
+```python
+atomica_search_by_uniprot("Q14145")  # KEAP1
+atomica_search_by_uniprot("P04637")  # TP53
+```
+
+#### 6. `atomica_search_by_organism(organism: str)`
+Search ATOMICA dataset for structures by organism (best-effort).
+
+**⚠️ Note**: Organism data in the index is often incomplete or missing. This tool:
+- Performs substring matching on organism names
+- Returns coverage statistics showing data completeness
+- May miss structures where organism info is not populated
+
+**Recommendation**: For more reliable species-specific searches, use `atomica_search_by_gene` with the `species` parameter.
 
 **Example:**
 ```python
 atomica_search_by_organism("Homo sapiens")
 atomica_search_by_organism("human")
+
+# Better approach for species-specific search:
+atomica_search_by_gene("KEAP1", "Homo sapiens")
 ```
 
 ### Auxiliary PDB Tools
@@ -383,38 +431,69 @@ atomica_search_by_gene("KEAP1")
 Response:
 {
   "gene_symbol": "KEAP1",
+  "resolution_method": "direct_gene_match",
   "structures": [
     {
       "pdb_id": "1U6D",
-      "title": "Kelch domain of Keap1",
+      "title": "Crystal structure of the Kelch domain of human Keap1",
       "uniprot_ids": ["Q14145"],
-      "gene_symbols": ["KEAP1"]
+      "gene_symbols": ["KEAP1"],
+      "interact_scores_path": "1u6d/1u6d_interact_scores.json",
+      "critical_residues_path": "1u6d/1u6d_critical_residues.tsv",
+      "pymol_path": "1u6d/1u6d_pymol_commands.pml"
     },
     ...
   ],
-  "count": 47
+  "count": 56
+}
+```
+
+### Search by UniProt ID
+
+```
+User: "Find structures for UniProt Q14145"
+
+Tool Call:
+atomica_search_by_uniprot("Q14145")
+
+Response:
+{
+  "uniprot_id": "Q14145",
+  "structures": [
+    {
+      "pdb_id": "1U6D",
+      "title": "Crystal structure of the Kelch domain of human Keap1",
+      "uniprot_ids": ["Q14145"],
+      "gene_symbols": ["KEAP1"],
+      "interact_scores_path": "1u6d/1u6d_interact_scores.json",
+      "critical_residues_path": "1u6d/1u6d_critical_residues.tsv",
+      "pymol_path": "1u6d/1u6d_pymol_commands.pml"
+    },
+    ...
+  ],
+  "count": 56
 }
 ```
 
 ### Get Structure Details
 
 ```
-User: "Tell me about structure 1b68"
+User: "Tell me about structure 1u6d"
 
 Tool Call:
-atomica_get_structure("1b68")
+atomica_get_structure("1u6d")
 
 Response:
 {
-  "pdb_id": "1B68",
-  "cif_path": "data/input/atomica_longevity_proteins/1b68.cif",
-  "metadata_path": "data/input/atomica_longevity_proteins/1b68_metadata.json",
-  "critical_residues_path": "data/input/atomica_longevity_proteins/1b68_critical_residues.tsv",
-  "interact_scores_path": "data/input/atomica_longevity_proteins/1b68_interact_scores.json",
-  "pymol_path": "data/input/atomica_longevity_proteins/1b68_pymol_commands.pml",
-  "title": "NMR Structure of Mouse APOE3",
-  "uniprot_ids": ["P08226"],
-  "gene_symbols": ["APOE"],
+  "pdb_id": "1U6D",
+  "cif_path": "1u6d/1u6d.cif",
+  "metadata_path": "1u6d/1u6d_metadata.json",
+  "critical_residues_path": "1u6d/1u6d_critical_residues.tsv",
+  "interact_scores_path": "1u6d/1u6d_interact_scores.json",
+  "pymol_path": "1u6d/1u6d_pymol_commands.pml",
+  "title": "Crystal structure of the Kelch domain of human Keap1",
+  "uniprot_ids": ["Q14145"],
+  "gene_symbols": ["KEAP1"],
   "critical_residues_count": 156
 }
 ```
