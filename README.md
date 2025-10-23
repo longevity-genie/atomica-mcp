@@ -7,7 +7,7 @@
 > Longevity Genie Team submission to the **Sequence to Function Track** at [HackAging.ai](http://hackaging.ai/)
 >
 > **What we built:**
-> - **This repository**: Model Context Protocol (MCP) server that works with Claude Desktop, Cursor, Windsurf, and other MCP hosts
+> - **This repository**: Model Context Protocol (MCP) server - a standardized way for AI assistants and agents to access specialized data and tools. Works with Claude Desktop, Cursor, Windsurf, VS Code with Copilot, and other MCP-compatible AI systems.
 > - **[Dataset](https://huggingface.co/datasets/longevity-genie/atomica_longevity_proteins)**: 94 analyzed longevity protein structures on Hugging Face
 > - **[Custom ATOMICA fork](https://github.com/longevity-genie/ATOMICA)**: Polished the original model with improved usability, additional features, and longevity-focused applications
 > - **[Analysis examples](analysis/)**: NRF2/KEAP1 structural analysis demo (showcased in presentation video) with figures showing disease mutations, glycation sites, and critical residues
@@ -29,10 +29,20 @@ We built a system that combines computational analysis with AI assistants throug
 **What's included:**
 
 1. **MCP servers** (work with Claude Desktop, Cursor, Windsurf, etc.)
-   - [synergy-age-MCP](https://github.com/longevity-genie/synergy-age-mcp) - aging gene interactions
-   - [omnipath-mcp](https://github.com/longevity-genie/omnipath-mcp) - signaling pathways
-   - biothings-mcp - gene annotations
-   - **This server** - precomputed interaction scores, PyMOL scripts, critical residue predictions
+   - Our previously developed servers:
+     - [synergy-age-mcp](https://biocontext.ai/registry/longevity-genie/synergy-age-mcp) - aging gene interactions
+     - [biothings-mcp](https://biocontext.ai/registry/longevity-genie/biothings-mcp) - gene, variant, and chemical annotations
+     - [opengenes-mcp](https://biocontext.ai/registry/longevity-genie/opengenes-mcp) - aging and longevity genetics
+   - Community servers used:
+     - [omnipath-next](https://biocontext.ai/registry/saezlab/omnipath-next) - molecular interactions and pathways (150+ resources)
+     - [BioContextAI Knowledgebase](https://biocontext.ai/registry/biocontext-ai/knowledgebase-mcp) - access to 19+ biomedical resources (STRINGDb, Open Targets, Reactome, UniProt, Human Protein Atlas, AlphaFold, and more)
+   - **This server (atomica-mcp)** - developed for this hackathon
+     - Access to precomputed ATOMICA interaction scores and critical residues
+     - PyMOL visualization scripts for structural analysis
+     - PDB structure search and metadata resolution (UniProt, Ensembl, gene symbols, organisms)
+     - Query tools for the longevity proteins dataset
+
+   _Note: Servers are registered in [BioContextAI Registry](https://biocontext.ai/), a platform co-authored by our team (paper accepted to Nature Biotechnology)_
 
 2. **Enhanced ATOMICA model** ([repo](https://github.com/longevity-genie/ATOMICA))
    - Polished the original model with improved usability and additional features
@@ -225,16 +235,7 @@ uv run pytest
 ## Requirements
 
 - Python 3.11+
-- biotite >= 1.5.0
-- eliot >= 1.17.5
-- fastmcp >= 2.12.5
-- fsspec >= 2025.9.0
-- huggingface-hub >= 0.35.3
-- polars >= 1.34.0
-- pycomfort >= 0.0.18
-- requests >= 2.32.5
-- tenacity >= 9.1.2
-- typer >= 0.20.0
+- All dependencies managed by `uv` - just run `uv sync`
 
 ## Related Projects
 
