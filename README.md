@@ -6,63 +6,61 @@
 > **🏆 HackAging.ai Submission**  
 > Longevity Genie Team submission to the **Sequence to Function Track** at [HackAging.ai](http://hackaging.ai/)
 >
+> **📺 [Watch Demo Video](https://youtu.be/JVL-Gd2p60w)** | **📊 [Presentation Slides](https://docs.google.com/presentation/d/1ZX44XQxWUYvo3pH9bJNdj5i4BN33pGkR9VNHJtyIKII/edit?usp=sharing)**
+>
 > **What we built:**
 > - **This repository**: Model Context Protocol (MCP) server - a standardized way for AI assistants and agents to access specialized data and tools. Works with Claude Desktop, Cursor, Windsurf, VS Code with Copilot, and other MCP-compatible AI systems.
 > - **[Dataset](https://huggingface.co/datasets/longevity-genie/atomica_longevity_proteins)**: 94 analyzed longevity protein structures on Hugging Face
 > - **[Custom ATOMICA fork](https://github.com/longevity-genie/ATOMICA)**: Polished the original model with improved usability, additional features, and longevity-focused applications
-> - **[Analysis examples](analysis/)**: NRF2/KEAP1 structural analysis demo (showcased in presentation video) with figures showing disease mutations, glycation sites, and critical residues
-> - **[Presentation](https://docs.google.com/presentation/d/1ZX44XQxWUYvo3pH9bJNdj5i4BN33pGkR9VNHJtyIKII/edit?usp=sharing)**: Overview slides and demo video
+> - **[Analysis examples](analysis/)**: NRF2/KEAP1 structural analysis demo (showcased in demo video) with figures showing disease mutations, glycation sites, and critical residues
 
 ## The Problem
 
-Aging research needs to evaluate thousands of protein-protein interactions. Every aging-related gene interacts with many others. Understanding these interactions helps us:
-- See which aging pathways work together or against each other
-- Transfer proteins from long-lived species without breaking their dependencies
-- Get quick, AI-readable interaction predictions
+Protein engineering for aging interventions requires synthesizing sequence-to-function knowledge from diverse sources—structural data, interaction predictions, evolutionary conservation, and experimental outcomes. AI agents need standardized access to these resources to generate comprehensive sequence-to-function analyses at scale.
 
-Traditional computational methods are too slow for this scale.
+Traditional computational methods are too slow for rapid iteration, and results aren't easily accessible within AI-assisted research workflows.
 
 ## Our Solution
 
-We built a system that combines computational analysis with AI assistants through Model Context Protocol servers.
+We built ATOMICA-based infrastructure enabling AI assistants to rapidly screen protein interactions and identify critical functional residues for automated sequence-to-function analysis.
 
-**What's included:**
+### Core Deliverables (Hackathon Focus)
 
-1. **MCP servers** (work with Claude Desktop, Cursor, Windsurf, etc.)
-   - Our previously developed servers:
-     - [synergy-age-mcp](https://biocontext.ai/registry/longevity-genie/synergy-age-mcp) - aging gene interactions
-     - [biothings-mcp](https://biocontext.ai/registry/longevity-genie/biothings-mcp) - gene, variant, and chemical annotations
-     - [opengenes-mcp](https://biocontext.ai/registry/longevity-genie/opengenes-mcp) - aging and longevity genetics
-   - Community servers used:
-     - [omnipath-next](https://biocontext.ai/registry/saezlab/omnipath-next) - molecular interactions and pathways (150+ resources)
-     - [BioContextAI Knowledgebase](https://biocontext.ai/registry/biocontext-ai/knowledgebase-mcp) - access to 19+ biomedical resources (STRINGDb, Open Targets, Reactome, UniProt, Human Protein Atlas, AlphaFold, and more)
-   - **This server (atomica-mcp)** - developed for this hackathon
-     - Access to precomputed ATOMICA interaction scores and critical residues
-     - PyMOL visualization scripts for structural analysis
-     - PDB structure search and metadata resolution (UniProt, Ensembl, gene symbols, organisms)
-     - Query tools for the longevity proteins dataset
+**1. atomica-mcp Server** (this repository)
+   - MCP interface connecting AI assistants to interaction scores and critical residue predictions
+   - Instant access to precomputed ATOMICA analyses for structural insights
+   - PyMOL visualization scripts for structural analysis
+   - PDB structure search and metadata resolution (UniProt, Ensembl, gene symbols, organisms)
 
-   _Note: Servers are registered in [BioContextAI Registry](https://biocontext.ai/), a platform co-authored by our team (paper accepted to Nature Biotechnology)_
+**2. [Longevity Proteins Dataset](https://huggingface.co/datasets/longevity-genie/atomica_longevity_proteins)**
+   - Curated structures on HuggingFace with pre-computed ATOMICA analyses
+   - Residue rankings and critical interaction scores
+   - Visualization scripts ready for AI-assisted exploration
 
-2. **Enhanced ATOMICA model** ([repo](https://github.com/longevity-genie/ATOMICA))
-   - Polished the original model with improved usability and additional features
-   - Applied to longevity research use-case
-   - Analyzed 94 structures across 5 longevity-related protein families
+**3. [Enhanced ATOMICA Fork](https://github.com/longevity-genie/ATOMICA)**
+   - Polished model with improved usability and additional features
+   - Longevity-focused applications for high-throughput screening
+   - Applied to aging-related protein families
 
-3. **Dataset and analysis examples** ([analysis/](analysis/) folder)
-   - 94 structures: NRF2, KEAP1, SOX2, APOE, OCT4
-   - Critical residue rankings using ATOMICA scoring
-   - Validation against disease mutations (NRF2 IMDDHH syndrome)
-   - Age-related modification sites (glycation)
-   - Figures and structural annotations included
+### Broader Integration
 
-**Demo analysis results (NRF2, as shown in video):**
+The atomica-mcp server works alongside our biological MCP ecosystem:
+- **Our servers**: [synergy-age-mcp](https://biocontext.ai/registry/longevity-genie/synergy-age-mcp), [biothings-mcp](https://biocontext.ai/registry/longevity-genie/biothings-mcp), [opengenes-mcp](https://biocontext.ai/registry/longevity-genie/opengenes-mcp)
+- **Community servers**: [omnipath-next](https://biocontext.ai/registry/saezlab/omnipath-next), [BioContextAI Knowledgebase](https://biocontext.ai/registry/biocontext-ai/knowledgebase-mcp)
+
+This enables AI agents to combine rapid ATOMICA interaction screening with pathway databases, variant annotations, and evolutionary data—synthesizing comprehensive articles about protein engineering opportunities for longevity.
+
+_Note: Servers are registered in [BioContextAI Registry](https://biocontext.ai/). Our team are co-authors of the BioContextAI Registry paper (accepted to Nature Biotechnology)_
+
+### Demo Analysis Results
+
+Our [NRF2/KEAP1 analysis](analysis/) (shown in [demo video](https://youtu.be/JVL-Gd2p60w)) demonstrates the workflow:
 - Confirmed E82 in ETGE motif as the most critical residue for KEAP1 binding
 - Found F468 maintains structure near age-affected glycation sites
 - Showed R499 glycation has more functional impact than K462
 - Identified potentially novel regulatory cysteines C406/C368 in KEAP1
 
-**How it works:** Connect AI assistants (Claude, Cursor, etc.) to biological databases through MCP servers, then use computational predictions to guide questions and validate findings.
+**Key advantage:** ATOMICA provides fast interaction evaluation to prioritize functionally important residues before applying more computationally intensive structural methods.
 
 ---
 
