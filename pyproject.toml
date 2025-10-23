@@ -4,7 +4,9 @@ version = "0.1.5"
 description = "MCP server for PDB structure queries and protein resolution using AnAge database"
 readme = "README.md"
 authors = [
-    { name = "antonkulaga", email = "antonkulaga@gmail.com" }
+    { name = "Anton Kulaga", email = "antonkulaga@gmail.com" },
+    { name = "Newton Winter" },
+    { name = "Livia Zaharia" }
 ]
 requires-python = ">=3.11"
 dependencies = [
