@@ -274,10 +274,10 @@ def reorganize(
         "--dataset-dir", "-d",
         help="Directory containing the ATOMICA longevity proteins dataset"
     ),
-    index_file: Path = typer.Option(
-        Path("data/output/atomica_index.parquet"),
+    index_file: Optional[Path] = typer.Option(
+        None,
         "--index", "-i",
-        help="Index parquet file to update"
+        help="Index parquet file to update (optional; if not provided, reorganizes based on file patterns)"
     ),
     dry_run: bool = typer.Option(
         False,
@@ -291,46 +291,84 @@ def reorganize(
     This command:
     1. Creates a folder for each PDB ID (e.g., 1b68/)
     2. Moves all related files into that folder (e.g., 1b68.cif, 1b68_metadata.json)
-    3. Updates the index parquet to use paths relative to dataset root
+    3. Updates the index parquet to use paths relative to dataset root (if index is provided)
+    
+    If no index is provided, it will reorganize files based on their naming patterns.
     
     Examples:
-        # Reorganize dataset
+        # Reorganize dataset with existing index
         dataset reorganize
+        
+        # Reorganize FOXO3 folder without index (based on file patterns)
+        dataset reorganize --dataset-dir data/FOXO3
         
         # Dry run to see what would be done
         dataset reorganize --dry-run
         
-        # Use custom paths
+        # Use custom paths with index
         dataset reorganize --dataset-dir data/atomica --index data/index.parquet
     """
     # Set up logging
     setup_logging("reorganize_dataset")
     
-    with start_action(action_type="reorganize_dataset", dataset_dir=str(dataset_dir), index=str(index_file), dry_run=dry_run) as action:
+    with start_action(action_type="reorganize_dataset", dataset_dir=str(dataset_dir), index=str(index_file) if index_file else "none", dry_run=dry_run) as action:
         if not dataset_dir.exists():
             typer.echo(f"❌ Dataset directory not found: {dataset_dir}", err=True)
             raise typer.Exit(code=1)
         
-        if not index_file.exists():
-            typer.echo(f"❌ Index file not found: {index_file}", err=True)
-            raise typer.Exit(code=1)
-        
         # Make paths absolute for processing
         dataset_dir = dataset_dir.resolve()
-        index_file = index_file.resolve()
         
         typer.echo(f"📦 Reorganizing ATOMICA dataset: {dataset_dir}")
-        typer.echo(f"📊 Index file: {index_file}")
+        
+        if index_file:
+            if not index_file.exists():
+                typer.echo(f"❌ Index file not found: {index_file}", err=True)
+                raise typer.Exit(code=1)
+            index_file = index_file.resolve()
+            typer.echo(f"📊 Index file: {index_file}")
+        else:
+            typer.echo(f"📊 No index provided - will reorganize based on file patterns")
+        
         if dry_run:
             typer.echo("🔍 DRY RUN MODE - No files will be moved")
         
-        # Load the index
-        typer.echo("\n📖 Loading index...")
-        df = pl.read_parquet(index_file)
-        typer.echo(f"✓ Found {len(df)} structures in index")
+        # Determine PDB IDs to process
+        pdb_ids: List[str] = []
         
-        # Find all PDB IDs
-        pdb_ids = df['pdb_id'].to_list()
+        if index_file:
+            # Load the index
+            typer.echo("\n📖 Loading index...")
+            df = pl.read_parquet(index_file)
+            pdb_ids = df['pdb_id'].to_list()
+            typer.echo(f"✓ Found {len(pdb_ids)} structures in index")
+        else:
+            # Scan directory for PDB files and extract PDB IDs from file patterns
+            typer.echo("\n🔍 Scanning directory for PDB files...")
+            
+            # Look for files matching pattern: {pdb_id}.cif or {pdb_id}_*.json/tsv/pml
+            all_files = list(dataset_dir.glob("*"))
+            pdb_id_set = set()
+            
+            for file in all_files:
+                if file.is_file():
+                    # Extract PDB ID from filename (e.g., "1b68.cif" -> "1b68")
+                    stem = file.stem
+                    # Remove suffixes like _metadata, _summary, _critical_residues, _interact_scores, _pymol_commands
+                    for suffix in ['_metadata', '_summary', '_critical_residues', '_interact_scores', '_pymol_commands']:
+                        if stem.endswith(suffix):
+                            stem = stem[:-len(suffix)]
+                    # Only add if it looks like a PDB ID (typically 4 chars/digits)
+                    if stem and len(stem) <= 4:
+                        pdb_id_set.add(stem.upper())
+            
+            pdb_ids = sorted(list(pdb_id_set))
+            
+            if not pdb_ids:
+                typer.echo("❌ No PDB files found in directory (expected files like: 1b68.cif, 1b68_metadata.json, etc.)", err=True)
+                raise typer.Exit(code=1)
+            
+            typer.echo(f"✓ Found {len(pdb_ids)} PDB IDs based on file patterns")
         
         # Track statistics
         moved_files = 0
@@ -378,67 +416,73 @@ def reorganize(
                         # File already in correct location
                         skipped_files += 1
                 
-        # Update the index with relative paths
-        typer.echo("\n📝 Updating index paths...")
-        
-        def make_relative_path(path_str: Optional[str]) -> Optional[str]:
-            """Convert absolute or project-relative path to dataset-relative path."""
-            if path_str is None:
-                return None
-            path = Path(path_str)
-            # If path is absolute or starts with data/input/atomica_longevity_proteins
-            if path.is_absolute():
-                try:
-                    rel = path.relative_to(dataset_dir)
-                    return str(rel)
-                except ValueError:
+        # Update the index with relative paths (only if index was provided)
+        if index_file:
+            typer.echo("\n📝 Updating index paths...")
+            
+            def make_relative_path(path_str: Optional[str]) -> Optional[str]:
+                """Convert absolute or project-relative path to dataset-relative path."""
+                if path_str is None:
+                    return None
+                path = Path(path_str)
+                # If path is absolute or starts with data/input/atomica_longevity_proteins
+                if path.is_absolute():
+                    try:
+                        rel = path.relative_to(dataset_dir)
+                        return str(rel)
+                    except ValueError:
+                        return str(path)
+                else:
+                    # Remove data/input/atomica_longevity_proteins prefix if present
+                    parts = path.parts
+                    if "atomica_longevity_proteins" in parts:
+                        idx = parts.index("atomica_longevity_proteins")
+                        rel_parts = parts[idx + 1:]
+                        if rel_parts:
+                            return str(Path(*rel_parts))
                     return str(path)
+            
+            # Load index
+            df = pl.read_parquet(index_file)
+            
+            # Update each path column
+            path_columns = [
+                'cif_path',
+                'metadata_path',
+                'summary_path',
+                'critical_residues_path',
+                'interact_scores_path',
+                'pymol_path'
+            ]
+            
+            # Only process columns that actually exist in the dataframe
+            existing_path_columns = [col for col in path_columns if col in df.columns]
+            
+            # Update all path columns at once
+            for col in existing_path_columns:
+                # Create a new column with updated paths
+                df = df.with_columns(
+                    pl.when(pl.col(col).is_not_null())
+                    .then(pl.col('pdb_id').str.to_lowercase() + "/" + pl.col(col).map_elements(lambda x: Path(x).name, return_dtype=pl.String))
+                    .otherwise(None)
+                    .alias(col)
+                )
+            
+            updated_paths = len(existing_path_columns)
+            
+            # Save updated index
+            if not dry_run:
+                typer.echo(f"💾 Saving updated index to: {index_file}")
+                df.write_parquet(index_file)
             else:
-                # Remove data/input/atomica_longevity_proteins prefix if present
-                parts = path.parts
-                if "atomica_longevity_proteins" in parts:
-                    idx = parts.index("atomica_longevity_proteins")
-                    rel_parts = parts[idx + 1:]
-                    if rel_parts:
-                        return str(Path(*rel_parts))
-                return str(path)
-        
-        # Update each path column
-        path_columns = [
-            'cif_path',
-            'metadata_path',
-            'summary_path',
-            'critical_residues_path',
-            'interact_scores_path',
-            'pymol_path'
-        ]
-        
-        # Only process columns that actually exist in the dataframe
-        existing_path_columns = [col for col in path_columns if col in df.columns]
-        
-        # Update all path columns at once
-        for col in existing_path_columns:
-            # Create a new column with updated paths
-            df = df.with_columns(
-                pl.when(pl.col(col).is_not_null())
-                .then(pl.col('pdb_id').str.to_lowercase() + "/" + pl.col(col).map_elements(lambda x: Path(x).name, return_dtype=pl.String))
-                .otherwise(None)
-                .alias(col)
-            )
-        
-        updated_paths = len(existing_path_columns)
-        
-        # Save updated index
-        if not dry_run:
-            typer.echo(f"💾 Saving updated index to: {index_file}")
-            df.write_parquet(index_file)
+                typer.echo(f"💾 Would save updated index to: {index_file}")
+            
+            # Show sample of updated paths
+            typer.echo("\n📋 Sample of updated paths:")
+            sample_df = df.select(['pdb_id', 'cif_path', 'metadata_path']).head(3)
+            typer.echo(sample_df)
         else:
-            typer.echo(f"💾 Would save updated index to: {index_file}")
-        
-        # Show sample of updated paths
-        typer.echo("\n📋 Sample of updated paths:")
-        sample_df = df.select(['pdb_id', 'cif_path', 'metadata_path']).head(3)
-        typer.echo(sample_df)
+            updated_paths = 0
         
         # Summary
         typer.echo("\n" + "="*60)
@@ -446,7 +490,8 @@ def reorganize(
         typer.echo(f"  📁 Folders created: {created_folders}")
         typer.echo(f"  📦 Files moved: {moved_files}")
         typer.echo(f"  ⊘ Files already in place: {skipped_files}")
-        typer.echo(f"  ✏️  Path columns updated: {updated_paths}")
+        if index_file:
+            typer.echo(f"  ✏️  Path columns updated: {updated_paths}")
         typer.echo(f"  📍 All paths now relative to: {dataset_dir.name}/")
         typer.echo("="*60)
         
@@ -459,7 +504,8 @@ def reorganize(
             message_type="reorganize_complete",
             folders_created=created_folders,
             files_moved=moved_files,
-            paths_updated=updated_paths
+            paths_updated=updated_paths,
+            index_provided=index_file is not None
         )
 
 
@@ -856,6 +902,386 @@ def index(
             total_uniprot_ids=total_uniprot,
             total_gene_symbols=total_genes,
             total_ensembl_ids=total_ensembl
+        )
+
+
+@app.command()
+def update(
+    update_dir: Path = typer.Option(
+        ...,
+        "--update-dir", "-u",
+        help="Directory containing new PDB structures to add to index"
+    ),
+    dataset_dir: Path = typer.Option(
+        Path("data/input/atomica_longevity_proteins"),
+        "--dataset-dir", "-d",
+        help="Main dataset directory (for resolving relative paths)"
+    ),
+    index_file: Path = typer.Option(
+        Path("data/output/atomica_index.parquet"),
+        "--index", "-i",
+        help="Existing index file to update"
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "--output", "-o",
+        help="Output file for updated index (defaults to same as --index)"
+    ),
+    save_to_dataset: bool = typer.Option(
+        True,
+        "--save-to-dataset/--no-save-to-dataset",
+        help="Also save updated index to dataset directory as atomica_index.parquet"
+    ),
+    include_metadata: bool = typer.Option(
+        False,
+        "--include-metadata",
+        help="Include full metadata dictionary in output (makes file larger)"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force", "-f",
+        help="Re-process structures that already exist in the index"
+    )
+) -> None:
+    """
+    Update existing index with new PDB structures from an update folder.
+    
+    This command:
+    1. Loads the existing index
+    2. Scans update folder for new structures (same format as dataset)
+    3. Resolves metadata only for new structures
+    4. Merges with existing index
+    5. Saves updated index
+    
+    The update folder should have the same structure as the dataset directory,
+    with subdirectories for each PDB ID containing the structure files.
+    
+    Examples:
+        # Update index with new structures
+        dataset update --update-dir data/new_structures
+        
+        # Update specific index file
+        dataset update --update-dir data/new_structures --index data/my_index.parquet
+        
+        # Force re-process existing structures
+        dataset update --update-dir data/updates --force
+        
+        # Save to different output file
+        dataset update --update-dir data/new --output data/updated_index.parquet
+    """
+    # Set up logging
+    setup_logging("update_dataset")
+    
+    with start_action(
+        action_type="update_dataset",
+        update_dir=str(update_dir),
+        dataset_dir=str(dataset_dir),
+        index_file=str(index_file),
+        force=force
+    ) as action:
+        # Validate paths
+        if not update_dir.exists():
+            typer.echo(f"❌ Update directory not found: {update_dir}", err=True)
+            raise typer.Exit(code=1)
+        
+        if not index_file.exists():
+            typer.echo(f"❌ Index file not found: {index_file}", err=True)
+            typer.echo(f"💡 Tip: Use 'dataset index' to create an initial index first", err=True)
+            raise typer.Exit(code=1)
+        
+        if output_file is None:
+            output_file = index_file
+        
+        typer.echo(f"📦 Updating ATOMICA index")
+        typer.echo(f"📂 Update directory: {update_dir}")
+        typer.echo(f"📊 Existing index: {index_file}")
+        typer.echo(f"💾 Output: {output_file}")
+        
+        # Load existing index
+        typer.echo("\n📖 Loading existing index...")
+        existing_df = pl.read_parquet(index_file)
+        existing_pdb_ids = set(existing_df['pdb_id'].to_list())
+        typer.echo(f"✓ Loaded {len(existing_df)} existing structures")
+        
+        # Find new structures in update directory
+        typer.echo(f"\n🔍 Scanning for new structures in {update_dir}...")
+        cif_files = sorted(update_dir.glob("**/*.cif"))
+        
+        if not cif_files:
+            typer.echo("❌ No CIF files found in update directory", err=True)
+            raise typer.Exit(code=1)
+        
+        typer.echo(f"✓ Found {len(cif_files)} structure files")
+        
+        # Filter to new structures (or all if force is True)
+        new_pdb_data = []
+        skipped_count = 0
+        
+        for cif_file in cif_files:
+            pdb_id = cif_file.stem
+            
+            # Skip if already exists and not forcing update
+            if pdb_id.upper() in existing_pdb_ids and not force:
+                skipped_count += 1
+                continue
+            
+            pdb_dir = cif_file.parent
+            
+            # Define expected file paths
+            metadata_path = pdb_dir / f"{pdb_id}_metadata.json"
+            summary_path = pdb_dir / f"{pdb_id}_summary.json"
+            critical_residues_path = pdb_dir / f"{pdb_id}_critical_residues.tsv"
+            interact_scores_path = pdb_dir / f"{pdb_id}_interact_scores.json"
+            pymol_path = pdb_dir / f"{pdb_id}_pymol_commands.pml"
+            
+            new_pdb_data.append({
+                "pdb_id": pdb_id,
+                "cif_path": cif_file,
+                "metadata_path": metadata_path,
+                "summary_path": summary_path,
+                "critical_residues_path": critical_residues_path,
+                "interact_scores_path": interact_scores_path,
+                "pymol_path": pymol_path,
+            })
+        
+        if skipped_count > 0:
+            typer.echo(f"⊘ Skipped {skipped_count} structures already in index (use --force to re-process)")
+        
+        if not new_pdb_data:
+            typer.echo("✓ No new structures to add. Index is up to date!")
+            return
+        
+        typer.echo(f"✓ Found {len(new_pdb_data)} new structures to process")
+        
+        # Process new structures (same logic as index command)
+        typer.echo(f"\n🔬 Resolving metadata for {len(new_pdb_data)} new structures...")
+        
+        new_records: List[Dict[str, Any]] = []
+        
+        for i, pdb_info in enumerate(new_pdb_data, 1):
+            pdb_id = pdb_info["pdb_id"]
+            
+            with start_action(action_type="process_new_pdb", pdb_id=pdb_id) as pdb_action:
+                # Read metadata JSON if it exists
+                metadata_json: Optional[Dict[str, Any]] = None
+                if pdb_info["metadata_path"].exists():
+                    with start_action(action_type="read_metadata_json", path=str(pdb_info["metadata_path"])):
+                        try:
+                            with open(pdb_info["metadata_path"], 'r') as f:
+                                metadata_json = json.load(f)
+                        except Exception as e:
+                            typer.echo(f"  ⚠ Warning: Could not read metadata for {pdb_id}: {e}")
+                
+                # Read summary JSON if it exists
+                summary_json: Optional[Dict[str, Any]] = None
+                if pdb_info["summary_path"].exists():
+                    with start_action(action_type="read_summary_json", path=str(pdb_info["summary_path"])):
+                        try:
+                            with open(pdb_info["summary_path"], 'r') as f:
+                                summary_json = json.load(f)
+                        except Exception as e:
+                            typer.echo(f"  ⚠ Warning: Could not read summary for {pdb_id}: {e}")
+                
+                # Count critical residues if file exists
+                critical_residues_count: Optional[int] = None
+                if pdb_info["critical_residues_path"].exists():
+                    try:
+                        with open(pdb_info["critical_residues_path"], 'r') as f:
+                            critical_residues_count = sum(1 for line in f if line.strip() and not line.startswith('#'))
+                    except Exception as e:
+                        typer.echo(f"  ⚠ Warning: Could not count residues for {pdb_id}: {e}")
+                
+                # Resolve protein metadata using comprehensive PDB mining
+                typer.echo(f"  [{i}/{len(new_pdb_data)}] Resolving metadata for {pdb_id}...", nl=False)
+                resolved_metadata = resolve_pdb_metadata(pdb_id)
+                
+                if resolved_metadata.get("found"):
+                    uniprot_count = len(resolved_metadata.get('uniprot_ids', []))
+                    gene_count = len(resolved_metadata.get('gene_symbols', []))
+                    organism = resolved_metadata.get('organisms', [])[0] if resolved_metadata.get('organisms') else None
+                    typer.echo(f" ✓ ({uniprot_count} UniProt, {gene_count} genes, {organism or 'no organism'})")
+                else:
+                    error_msg = resolved_metadata.get("error", "Unknown error")
+                    typer.echo(f" ⚠ {error_msg}")
+                
+                # Compute relative paths to dataset_dir
+                # This ensures paths are consistent with the main index
+                try:
+                    cif_rel_path = str(pdb_info["cif_path"].relative_to(dataset_dir)) if pdb_info["cif_path"].exists() else None
+                except ValueError:
+                    # If not relative to dataset_dir, try to construct path
+                    cif_rel_path = f"{pdb_id}/{pdb_id}.cif" if pdb_info["cif_path"].exists() else None
+                
+                try:
+                    metadata_rel_path = str(pdb_info["metadata_path"].relative_to(dataset_dir)) if pdb_info["metadata_path"].exists() else None
+                except ValueError:
+                    metadata_rel_path = f"{pdb_id}/{pdb_id}_metadata.json" if pdb_info["metadata_path"].exists() else None
+                
+                try:
+                    summary_rel_path = str(pdb_info["summary_path"].relative_to(dataset_dir)) if pdb_info["summary_path"].exists() else None
+                except ValueError:
+                    summary_rel_path = f"{pdb_id}/{pdb_id}_summary.json" if pdb_info["summary_path"].exists() else None
+                
+                try:
+                    critical_residues_rel_path = str(pdb_info["critical_residues_path"].relative_to(dataset_dir)) if pdb_info["critical_residues_path"].exists() else None
+                except ValueError:
+                    critical_residues_rel_path = f"{pdb_id}/{pdb_id}_critical_residues.tsv" if pdb_info["critical_residues_path"].exists() else None
+                
+                try:
+                    interact_scores_rel_path = str(pdb_info["interact_scores_path"].relative_to(dataset_dir)) if pdb_info["interact_scores_path"].exists() else None
+                except ValueError:
+                    interact_scores_rel_path = f"{pdb_id}/{pdb_id}_interact_scores.json" if pdb_info["interact_scores_path"].exists() else None
+                
+                try:
+                    pymol_rel_path = str(pdb_info["pymol_path"].relative_to(dataset_dir)) if pdb_info["pymol_path"].exists() else None
+                except ValueError:
+                    pymol_rel_path = f"{pdb_id}/{pdb_id}_pymol_commands.pml" if pdb_info["pymol_path"].exists() else None
+                
+                # Build record
+                record = {
+                    "pdb_id": pdb_id.upper(),
+                    # File paths (relative to dataset dir)
+                    "cif_path": cif_rel_path,
+                    "metadata_path": metadata_rel_path,
+                    "summary_path": summary_rel_path,
+                    "critical_residues_path": critical_residues_rel_path,
+                    "interact_scores_path": interact_scores_rel_path,
+                    "pymol_path": pymol_rel_path,
+                    # Counts and stats
+                    "critical_residues_count": critical_residues_count,
+                    "total_time_seconds": summary_json.get("total_time_seconds") if summary_json else None,
+                    "gpu_memory_mb_max": summary_json.get("gpu_memory_mb", {}).get("max") if summary_json else None,
+                    # Resolved metadata from PDB mining
+                    "metadata_found": resolved_metadata.get("found", False),
+                    "title": resolved_metadata.get("title"),
+                    "uniprot_ids": resolved_metadata.get("uniprot_ids", []),
+                    "organisms": resolved_metadata.get("organisms", []),
+                    "taxonomy_ids": resolved_metadata.get("taxonomy_ids", []),
+                    "gene_symbols": resolved_metadata.get("gene_symbols", []),
+                    "ensembl_ids": resolved_metadata.get("ensembl_ids", []),
+                    "structures_json": json.dumps(resolved_metadata.get("structures", [])) if resolved_metadata.get("structures") else None,
+                }
+                
+                # Optionally include full metadata
+                if include_metadata:
+                    record["metadata_json"] = metadata_json
+                    record["summary_json"] = summary_json
+                
+                new_records.append(record)
+                
+                pdb_action.log(
+                    message_type="new_pdb_processed",
+                    metadata_found=resolved_metadata.get("found", False),
+                    uniprot_count=len(resolved_metadata.get("uniprot_ids", []))
+                )
+        
+        # Batch-resolve Ensembl IDs for new structures
+        typer.echo("\n🧬 Batch-resolving Ensembl IDs for new structures...")
+        
+        all_uniprot_ids = set()
+        for record in new_records:
+            all_uniprot_ids.update(record.get("uniprot_ids", []))
+        
+        if all_uniprot_ids:
+            from atomica_mcp.mining.pdb_metadata import get_uniprot_info_batch
+            
+            typer.echo(f"  Found {len(all_uniprot_ids)} unique UniProt IDs to resolve")
+            uniprot_info_map = get_uniprot_info_batch(list(all_uniprot_ids))
+            
+            # Update records with Ensembl IDs and organism info
+            for record in new_records:
+                ensembl_ids_set = set()
+                organisms_set = set()
+                taxonomy_ids_set = set()
+                
+                for uniprot_id in record.get("uniprot_ids", []):
+                    uniprot_info = uniprot_info_map.get(uniprot_id)
+                    if uniprot_info:
+                        if "ensembl_ids" in uniprot_info:
+                            ensembl_ids_set.update(uniprot_info["ensembl_ids"])
+                        if uniprot_info.get("organism"):
+                            organisms_set.add(uniprot_info["organism"])
+                        if uniprot_info.get("tax_id"):
+                            taxonomy_ids_set.add(uniprot_info["tax_id"])
+                
+                record["ensembl_ids"] = list(ensembl_ids_set)
+                if organisms_set:
+                    record["organisms"] = list(organisms_set)
+                if taxonomy_ids_set:
+                    record["taxonomy_ids"] = list(taxonomy_ids_set)
+            
+            typer.echo(f"  ✓ Resolved Ensembl IDs for {len([r for r in new_records if r['ensembl_ids']])} structures")
+        
+        # Create DataFrame for new records
+        typer.echo("\n📊 Creating updated index...")
+        new_df = pl.DataFrame(new_records)
+        
+        # Remove old entries if forcing update (to avoid duplicates)
+        if force:
+            new_pdb_ids_set = set(pdb_id.upper() for pdb_id in [info["pdb_id"] for info in new_pdb_data])
+            existing_df = existing_df.filter(~pl.col('pdb_id').is_in(list(new_pdb_ids_set)))
+            typer.echo(f"  Removed {len(new_pdb_ids_set)} existing entries for update")
+        
+        # Combine with existing index
+        updated_df = pl.concat([existing_df, new_df], how="diagonal")
+        
+        # Sort by PDB ID for consistency
+        updated_df = updated_df.sort("pdb_id")
+        
+        typer.echo(f"✓ Combined {len(existing_df)} existing + {len(new_df)} new = {len(updated_df)} total structures")
+        
+        # Ensure output directory exists
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save updated index
+        typer.echo(f"\n💾 Saving updated index to: {output_file}")
+        updated_df.write_parquet(output_file)
+        
+        # Also save to dataset directory if requested
+        if save_to_dataset:
+            dataset_index_path = dataset_dir / "atomica_index.parquet"
+            typer.echo(f"💾 Saving updated index to dataset directory: {dataset_index_path}")
+            updated_df.write_parquet(dataset_index_path)
+        
+        # Print summary statistics
+        typer.echo("\n" + "="*60)
+        typer.echo("📊 Update Summary:")
+        typer.echo(f"  Previous structures: {len(existing_df)}")
+        typer.echo(f"  New structures added: {len(new_df)}")
+        typer.echo(f"  Total structures: {len(updated_df)}")
+        
+        if skipped_count > 0:
+            typer.echo(f"  Skipped (already exist): {skipped_count}")
+        
+        # Count newly added with metadata
+        new_with_metadata = new_df.filter(pl.col('metadata_found')).height
+        typer.echo(f"  New with metadata: {new_with_metadata}")
+        
+        # Count total UniProt IDs, genes, and Ensembl IDs in new structures
+        total_new_uniprot = sum(len(ids) for ids in new_df['uniprot_ids'].to_list())
+        total_new_genes = sum(len(genes) for genes in new_df['gene_symbols'].to_list())
+        total_new_ensembl = sum(len(ids) for ids in new_df['ensembl_ids'].to_list())
+        
+        if total_new_uniprot > 0:
+            typer.echo(f"  New UniProt IDs: {total_new_uniprot}")
+        if total_new_genes > 0:
+            typer.echo(f"  New gene symbols: {total_new_genes}")
+        if total_new_ensembl > 0:
+            typer.echo(f"  New Ensembl IDs: {total_new_ensembl}")
+        
+        typer.echo(f"\n  📁 Updated index saved: {output_file.resolve()}")
+        if save_to_dataset:
+            typer.echo(f"  📁 Also saved to: {(dataset_dir / 'atomica_index.parquet').resolve()}")
+        typer.echo("="*60)
+        
+        typer.echo("\n✅ Index update completed successfully!")
+        
+        action.log(
+            message_type="update_complete",
+            previous_count=len(existing_df),
+            new_count=len(new_df),
+            total_count=len(updated_df),
+            skipped_count=skipped_count
         )
 
 
