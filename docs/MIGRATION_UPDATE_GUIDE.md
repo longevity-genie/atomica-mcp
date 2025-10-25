@@ -1,8 +1,19 @@
 # ATOMICA Dataset Migration & Update Guide
 
-This guide explains how to migrate legacy dataset structures (with files spread across multiple folders) into the standardized ATOMICA format and update your main dataset index.
+This guide explains how to migrate legacy dataset structures (with files spread across multiple folders) into the standardized ATOMICA format, update your main dataset index, and sync with the HuggingFace repository.
 
 ## Overview
+
+The ATOMICA longevity proteins dataset is hosted on HuggingFace at:
+**https://huggingface.co/datasets/longevity-genie/atomica_longevity_proteins**
+
+### Important Notes
+
+⚠️ **The dataset is NOT a git submodule** - it's downloaded directly from HuggingFace using the `dataset download` command.
+
+⚠️ **Always download the latest dataset first** before making updates to ensure you have the current version.
+
+⚠️ **After migration, upload changes back to HuggingFace** using the `upload_to_hf.py` script to share your updates.
 
 ### Old Structure (Legacy)
 Files were scattered across multiple locations with inconsistent organization:
@@ -35,14 +46,14 @@ Files are organized by PDB ID in a single directory:
 data/input/atomica_longevity_proteins/
 ├── 1b68/
 │   ├── 1b68.cif
-│   ├── 1b68.json (or 1b68_metadata.json)
+│   ├── 1b68_metadata.json
 │   ├── 1b68_critical_residues.tsv
 │   ├── 1b68_interact_scores.json
 │   ├── 1b68_pymol_commands.pml
 │   └── 1b68_summary.json
 ├── 6ht5/
 │   ├── 6ht5.cif
-│   ├── 6ht5.json
+│   ├── 6ht5_metadata.json
 │   ├── 6ht5_critical_residues.tsv
 │   ├── 6ht5_interact_scores.json
 │   ├── 6ht5_pymol_commands.pml
@@ -50,11 +61,43 @@ data/input/atomica_longevity_proteins/
 └── atomica_index.parquet
 ```
 
+## Complete Migration Workflow
+
+### Prerequisites
+
+1. **HuggingFace Token** (for uploading changes):
+   ```bash
+   # Set your HF token as environment variable
+   export HF_TOKEN="your_huggingface_token_here"
+   
+   # Or add to .env file in project root
+   echo "HF_TOKEN=your_huggingface_token_here" >> .env
+   ```
+
+2. **Python Environment** with required packages:
+   ```bash
+   pip install atomica-mcp  # or install from source
+   ```
+
 ## Migration Steps
 
-### Step 1: Prepare Your Old Dataset
+### Step 0: Download Current Dataset from HuggingFace
 
-First, consolidate all files related to each PDB into a single staging directory.
+**⚠️ CRITICAL**: Always start by downloading the current dataset to ensure you have the latest version:
+
+```bash
+# Download the full dataset (default location: data/input/atomica_longevity_proteins)
+python -m atomica_mcp.dataset download
+
+# Or specify custom location
+python -m atomica_mcp.dataset download --output-dir data/input/atomica_longevity_proteins
+```
+
+This ensures you're working with the current dataset and won't overwrite existing structures when updating.
+
+### Step 1: Prepare Your New Dataset
+
+Consolidate all files related to each PDB into a single staging directory.
 
 **Option A: If files are in separate folders**
 
@@ -66,7 +109,7 @@ mkdir -p staging/atomica_staging
 # Copy structure files
 cp downloads/pdbs/*.cif staging/atomica_staging/
 
-# Copy metadata files (rename .json to _metadata.json if needed)
+# Copy metadata files
 cp downloads/pdbs/*.json staging/atomica_staging/
 
 # Copy analysis files
@@ -76,18 +119,21 @@ cp output/*_pymol_commands.pml staging/atomica_staging/
 cp output/*_summary.json staging/atomica_staging/
 ```
 
-**Option B: If metadata files are named differently**
+**Option B: If metadata files need renaming**
 
-Rename them to match the expected pattern:
+Ensure metadata files have the `_metadata.json` suffix:
 ```bash
 cd staging/atomica_staging
 for f in *.json; do
-  # Skip if already has _metadata suffix
-  if [[ ! "$f" =~ _metadata\.json$ ]]; then
+  # Skip if already has _metadata or other suffix
+  if [[ ! "$f" =~ _(metadata|summary|interact_scores)\.json$ ]]; then
     pdb_id="${f%.json}"
-    mv "$f" "${pdb_id}_metadata.json"
+    if [[ -f "$pdb_id.cif" ]]; then
+      mv "$f" "${pdb_id}_metadata.json"
+    fi
   fi
 done
+cd -
 ```
 
 ### Step 2: Preview Reorganization (Dry Run)
@@ -95,8 +141,8 @@ done
 Before making actual changes, do a dry run to see what will happen:
 
 ```bash
-# Dry run - shows what would be reorganized
-dataset reorganize \
+# Dry run - shows what would be reorganized (no index needed!)
+python -m atomica_mcp.dataset reorganize \
   --dataset-dir staging/atomica_staging \
   --dry-run
 ```
@@ -129,8 +175,8 @@ dataset reorganize \
 Once you've verified the dry run output, execute the actual reorganization:
 
 ```bash
-# Reorganize files into per-PDB folders
-dataset reorganize \
+# Reorganize files into per-PDB folders (no index needed!)
+python -m atomica_mcp.dataset reorganize \
   --dataset-dir staging/atomica_staging
 ```
 
@@ -160,7 +206,7 @@ Now update your main ATOMICA dataset with the newly reorganized structures:
 
 ```bash
 # Update the main index with new structures from staging
-dataset update \
+python -m atomica_mcp.dataset update \
   --update-dir staging/atomica_staging \
   --dataset-dir data/input/atomica_longevity_proteins \
   --index data/output/atomica_index.parquet
@@ -217,12 +263,67 @@ dataset update \
 ✅ Index update completed successfully!
 ```
 
-### Step 5 (Optional): Verify Update
+### Step 5: Copy to Dataset Directory
+
+Copy the reorganized structures to the main dataset directory:
+
+```bash
+# Copy reorganized structures to main dataset
+cp -r staging/atomica_staging/*/ data/input/atomica_longevity_proteins/
+
+# Verify
+ls -la data/input/atomica_longevity_proteins/ | head -20
+```
+
+### Step 6: Upload to HuggingFace (CRITICAL!)
+
+**⚠️ IMPORTANT**: After updating the dataset locally, you MUST upload changes to HuggingFace to share with the team.
+
+```bash
+# Upload updated dataset to HuggingFace
+python -m atomica_mcp.upload_to_hf upload \
+  --local-dir data/input/atomica_longevity_proteins \
+  --repo-id longevity-genie/atomica_longevity_proteins \
+  --commit-message "Add FOXO3/HSF1/NRF2 structures from new analysis"
+```
+
+**Upload features:**
+- ✅ **Intelligent sync** - Only uploads new or changed files
+- ✅ **Hash-based comparison** - Compares local vs remote file hashes
+- ✅ **Bulk upload** - Single commit for all changes
+- ✅ **Dry run support** - Preview what will be uploaded
+
+**Preview before uploading:**
+```bash
+# Dry run to see what would be uploaded
+python -m atomica_mcp.upload_to_hf upload \
+  --local-dir data/input/atomica_longevity_proteins \
+  --dry-run
+```
+
+**Output example:**
+```
+Found 47 files to upload:
+  - 1b68/1b68.cif
+  - 1b68/1b68_metadata.json
+  - 1b68/1b68_critical_residues.tsv
+  ...
+  - atomica_index.parquet
+
+Uploading to longevity-genie/atomica_longevity_proteins...
+Upload complete!
+Commit URL: https://huggingface.co/datasets/longevity-genie/atomica_longevity_proteins/commit/abc123
+```
+
+### Step 7: Verify Upload
 
 Verify that the structures were properly added:
 
 ```bash
-# Load and inspect the updated index
+# View the dataset on HuggingFace
+open https://huggingface.co/datasets/longevity-genie/atomica_longevity_proteins
+
+# Or load and inspect the updated index
 python << 'EOF'
 import polars as pl
 
@@ -246,111 +347,6 @@ for org, count in org_counts.most_common(5):
 print("\nSample of updated dataset:")
 print(df.select(['pdb_id', 'uniprot_ids', 'gene_symbols', 'organisms']).head(5))
 EOF
-```
-
-### Step 6 (Optional): Copy to Dataset Directory
-
-If you want to also copy the reorganized files to the main dataset directory:
-
-```bash
-# Copy reorganized structures to main dataset
-cp -r staging/atomica_staging/*/ data/input/atomica_longevity_proteins/
-
-# Verify
-ls -la data/input/atomica_longevity_proteins/ | head -20
-```
-
-## Complete Migration Script
-
-Here's a complete bash script that performs the entire migration:
-
-```bash
-#!/bin/bash
-set -e
-
-# Configuration
-OLD_CIF_DIR="downloads/pdbs"
-OLD_METADATA_DIR="downloads/pdbs"
-OLD_ANALYSIS_DIR="output"
-STAGING_DIR="staging/atomica_staging"
-MAIN_DATASET_DIR="data/input/atomica_longevity_proteins"
-INDEX_FILE="data/output/atomica_index.parquet"
-
-echo "🚀 Starting ATOMICA dataset migration..."
-
-# Step 1: Create staging directory
-echo "📁 Creating staging directory..."
-mkdir -p "$STAGING_DIR"
-
-# Step 2: Copy files
-echo "📦 Copying files to staging directory..."
-cp "$OLD_CIF_DIR"/*.cif "$STAGING_DIR/" 2>/dev/null || echo "⚠️  No CIF files found"
-cp "$OLD_METADATA_DIR"/*.json "$STAGING_DIR/" 2>/dev/null || echo "⚠️  No metadata files found"
-cp "$OLD_ANALYSIS_DIR"/*_critical_residues.tsv "$STAGING_DIR/" 2>/dev/null || echo "⚠️  No critical residues files found"
-cp "$OLD_ANALYSIS_DIR"/*_interact_scores.json "$STAGING_DIR/" 2>/dev/null || echo "⚠️  No interact scores files found"
-cp "$OLD_ANALYSIS_DIR"/*_pymol_commands.pml "$STAGING_DIR/" 2>/dev/null || echo "⚠️  No PyMOL commands files found"
-cp "$OLD_ANALYSIS_DIR"/*_summary.json "$STAGING_DIR/" 2>/dev/null || echo "⚠️  No summary files found"
-
-# Step 3: Rename metadata files if needed
-echo "🔧 Normalizing metadata file names..."
-cd "$STAGING_DIR"
-for f in *.json; do
-  if [[ ! "$f" =~ _metadata\.json$ ]]; then
-    pdb_id="${f%.json}"
-    if [[ -f "$pdb_id.cif" ]]; then
-      # This is a metadata file for a CIF
-      mv "$f" "${pdb_id}_metadata.json" 2>/dev/null || true
-    fi
-  fi
-done
-cd - > /dev/null
-
-# Step 4: Dry run
-echo "🔍 Running dry run to preview changes..."
-dataset reorganize \
-  --dataset-dir "$STAGING_DIR" \
-  --dry-run
-
-read -p "👉 Continue with reorganization? (y/n) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-  echo "❌ Migration cancelled"
-  exit 1
-fi
-
-# Step 5: Reorganize
-echo "🔄 Reorganizing files..."
-dataset reorganize \
-  --dataset-dir "$STAGING_DIR"
-
-# Step 6: Update index
-echo "🔄 Updating main dataset index..."
-dataset update \
-  --update-dir "$STAGING_DIR" \
-  --dataset-dir "$MAIN_DATASET_DIR" \
-  --index "$INDEX_FILE"
-
-# Step 7: Optional copy to main dataset
-read -p "👉 Copy reorganized structures to main dataset? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-  echo "📋 Copying to main dataset directory..."
-  cp -r "$STAGING_DIR"/*/ "$MAIN_DATASET_DIR/"
-  echo "✅ Files copied"
-fi
-
-echo ""
-echo "✅ Migration completed successfully!"
-echo "📊 Summary:"
-echo "   Staging directory: $STAGING_DIR"
-echo "   Main dataset: $MAIN_DATASET_DIR"
-echo "   Index file: $INDEX_FILE"
-```
-
-Save as `scripts/migrate_dataset.sh` and run:
-```bash
-chmod +x scripts/migrate_dataset.sh
-./scripts/migrate_dataset.sh
 ```
 
 ## Troubleshooting
@@ -403,27 +399,71 @@ dataset index \
 
 ## Quick Reference
 
-### Just Reorganize a Folder (No Index Update)
+### Download Current Dataset from HuggingFace
 ```bash
-dataset reorganize --dataset-dir data/my_folder
+python -m atomica_mcp.dataset download
+```
+
+### Just Reorganize a Folder (No Index Needed)
+```bash
+python -m atomica_mcp.dataset reorganize --dataset-dir data/my_folder
 ```
 
 ### Reorganize + Update Main Index
 ```bash
-dataset reorganize --dataset-dir staging/new_data
-dataset update \
+python -m atomica_mcp.dataset reorganize --dataset-dir staging/new_data
+python -m atomica_mcp.dataset update \
   --update-dir staging/new_data \
   --dataset-dir data/input/atomica_longevity_proteins \
   --index data/output/atomica_index.parquet
 ```
 
+### Upload Changes to HuggingFace
+```bash
+# Preview what will be uploaded
+python -m atomica_mcp.upload_to_hf upload \
+  --local-dir data/input/atomica_longevity_proteins \
+  --dry-run
+
+# Actually upload
+python -m atomica_mcp.upload_to_hf upload \
+  --local-dir data/input/atomica_longevity_proteins \
+  --commit-message "Add new structures from analysis"
+```
+
 ### Force Re-process Existing Structures
 ```bash
-dataset update \
+python -m atomica_mcp.dataset update \
   --update-dir staging/data \
   --dataset-dir data/input/atomica_longevity_proteins \
   --index data/output/atomica_index.parquet \
   --force
+```
+
+## Complete Workflow Summary
+
+For someone migrating FOXO3/HSF1/NRF2 data:
+
+```bash
+# 1. Download current dataset
+python -m atomica_mcp.dataset download
+
+# 2. Reorganize your new data
+python -m atomica_mcp.dataset reorganize --dataset-dir analysis/FOXO3
+
+# 3. Update main index
+python -m atomica_mcp.dataset update \
+  --update-dir analysis/FOXO3 \
+  --dataset-dir data/input/atomica_longevity_proteins \
+  --index data/output/atomica_index.parquet
+
+# 4. Copy files to main dataset
+cp -r analysis/FOXO3/*/ data/input/atomica_longevity_proteins/
+
+# 5. Upload to HuggingFace
+python -m atomica_mcp.upload_to_hf upload \
+  --local-dir data/input/atomica_longevity_proteins \
+  --commit-message "Add FOXO3 structures from new analysis"
 ```
 
 ## Benefits of New Structure
